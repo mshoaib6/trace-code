@@ -1,0 +1,16 @@
+{
+    "print()": [{"syscall": "write", "args": "stdout"}],
+    "open()": [{"syscall": "openat", "args": "args"}],
+    "requests.get()": [{"syscall": "mmap", "args": "*"}, {"syscall": "recvfrom", "args": "*"},  {"syscall": "bind", "args": "*"}, {"syscall": "read", "args": "*"}, {"syscall": "sendto", "args": "*"}, {"syscall": "mprotect", "args": "*"},{"syscall": "close", "args": "*"}, {"syscall": "recvmsg", "args": "*"}, {"syscall": "openat", "args": "*"},  {"syscall": "connect", "args": "*"}],
+    "requests.post()": [{"syscall": "mmap", "args": "*"}, {"syscall": "recvfrom", "args": "*"},  {"syscall": "bind", "args": "*"}, {"syscall": "read", "args": "*"}, {"syscall": "sendto", "args": "*"}, {"syscall": "mprotect", "args": "*"},{"syscall": "close", "args": "*"}, {"syscall": "recvmsg", "args": "*"}, {"syscall": "openat", "args": "*"},  {"syscall": "connect", "args": "*"}],
+    "input()": [{"syscall": "read", "args": "stdin"}],
+    "requests.Session().post()": [{"syscall": "mmap", "args": "*"}, {"syscall": "recvfrom", "args": "*"},  {"syscall": "bind", "args": "*"}, {"syscall": "read", "args": "*"}, {"syscall": "sendto", "args": "*"}, {"syscall": "mprotect", "args": "*"},{"syscall": "close", "args": "*"}, {"syscall": "recvmsg", "args": "*"}, {"syscall": "openat", "args": "*"},  {"syscall": "connect", "args": "*"}],
+    "requests.Session()": [{"syscall": "mmap", "args": "*"}, {"syscall": "mprotect", "args": "*"}, {"syscall": "bind", "args": "*"}],
+    "requests.Session().get()": [{"syscall": "mmap", "args": "*"}, {"syscall": "recvfrom", "args": "*"},  {"syscall": "bind", "args": "*"}, {"syscall": "read", "args": "*"}, {"syscall": "sendto", "args": "*"}, {"syscall": "mprotect", "args": "*"},{"syscall": "close", "args": "*"}, {"syscall": "recvmsg", "args": "*"}, {"syscall": "openat", "args": "*"},  {"syscall": "connect", "args": "*"}],
+    "requests.packages.urllib3.disable_warnings()": [{"syscall": "mmap", "args": "*"}, {"syscall": "mprotect", "args": "*"}, {"syscall": "bind", "args": "*"}, {"syscall": "close", "args": "*"}],
+    "socket.socket().recv()": [{"syscall": "mmap", "args": "*"}, {"syscall": "recvfrom", "args": "*"}, {"syscall": "read", "args": "*"}, {"syscall": "bind", "args": "*"}, {"syscall": "sendto", "args": "*"}, {"syscall": "accept4", "args": "*"}, {"syscall": "close", "args": "*"}, {"syscall": "recvmsg", "args": "*"}, {"syscall": "openat", "args": "*"}, {"syscall": "connect", "args": "*"}],
+    "urllib3.disable_warnings()": [{"syscall": "mmap", "args": "*"}, {"syscall": "mprotect", "args": "*"}, {"syscall": "bind", "args": "*"}, {"syscall": "close", "args": "*"}],
+    "socket.socket().send()": [{"syscall": "mmap", "args": "*"},{"syscall": "read", "args": "*"}, {"syscall": "bind", "args": "*"}, {"syscall": "sendto", "args": "*"}, {"syscall": "close", "args": "*"}, {"syscall": "recvmsg", "args": "*"}, {"syscall": "openat", "args": "*"}, {"syscall": "connect", "args": "*"}],
+    "sys.stdout.write()": [{"syscall": "write", "args": "stdout"}],
+    "argparse.ArgumentParser().print_help()": [{"syscall": "write", "args": "stdout"}]
+}

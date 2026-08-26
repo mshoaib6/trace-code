@@ -1,0 +1,142 @@
+{
+    "read": [
+        "File",
+        "out"
+    ],
+    "readv": [
+        "File",
+        "out"
+    ],
+    "write": [
+        "File",
+        "out"
+    ],
+    "writev": [
+        "File",
+        "out"
+    ],
+    "send": [
+        "Socket",
+        "out"
+    ],
+    "receive": [
+        "Socket",
+        "out"
+    ],
+    "link": [
+        "File",
+        "out"
+    ],
+    "symlink": [
+        "File",
+        "out"
+    ],
+    "spawn": [
+        "Process",
+        "out"
+    ],
+    "execute": [
+        "Process",
+        "out"
+    ],
+    "open": [
+        "File",
+        "none"
+    ],
+    "close": [
+        "File",
+        "out"
+    ],
+    "creat": [
+        "File",
+        "out"
+    ],
+    "mknodat": [
+        "File",
+        "out"
+    ],
+    "mknod": [
+        "File",
+        "out"
+    ],
+    "dup": [
+        "File",
+        "none"
+    ],
+    "dup2": [
+        "File",
+        "none"
+    ],
+    "dup3": [
+        "File",
+        "none"
+    ],
+    "bind": [
+        "Socket",
+        "in"
+    ],
+    "accept": [
+        "Socket",
+        "in"
+    ],
+    "connect": [
+        "Socket",
+        "in"
+    ],
+    "rename": [
+        "File",
+        "out"
+    ],
+    "setuid": [
+        "Process",
+        "in"
+    ],
+    "setreuid": [
+        "Process",
+        "in"
+    ],
+    "setresuid": [
+        "Process",
+        "in"
+    ],
+    "chmod": [
+        "File",
+        "out"
+    ],
+    "fchmod": [
+        "File",
+        "out"
+    ],
+    "truncate": [
+        "File",
+        "out"
+    ],
+    "ftruncate": [
+        "File",
+        "out"
+    ],
+    "sendfile": [
+        "File",
+        "out"
+    ],
+    "unlink": [
+        "File",
+        "out"
+    ],
+    "unlinkat": [
+        "File",
+        "out"
+    ],
+    "socketpair": [
+        "Socket",
+        "out"
+    ],
+    "splice": [
+        "File",
+        "out"
+    ],
+    "memory": [
+        "None",
+        "out"
+    ]
+}

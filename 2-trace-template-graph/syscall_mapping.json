@@ -1,0 +1,340 @@
+{
+  "print()": [
+    {
+      "syscall": "write",
+      "args": "stdout"
+    }
+  ],
+  "open()": [
+    {
+      "syscall": "open",
+      "args": "args"
+    },
+    {
+      "syscall": "read",
+      "args": "args"
+    },
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "Popen()": [
+    {
+      "syscall": "open",
+      "args": "args"
+    },
+    {
+      "syscall": "read",
+      "args": "args"
+    },
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "requests.get()": [
+    {
+      "syscall": "read",
+      "args": "args"
+    }
+  ],
+  "requests.post()": [
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "input()": [
+    {
+      "syscall": "read",
+      "args": "stdin"
+    }
+  ],
+  "requests.Session().post()": [
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "requests.Session()": [
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "bind",
+      "args": "*"
+    }
+  ],
+  "requests.Session().get()": [
+    {
+      "syscall": "read",
+      "args": "args"
+    }
+  ],
+  "requests.packages.urllib3.disable_warnings()": [
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "bind",
+      "args": "*"
+    },
+    {
+      "syscall": "close",
+      "args": "*"
+    }
+  ],
+  "socket.socket().recv()": [
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "receive",
+      "args": "*"
+    },
+    {
+      "syscall": "read",
+      "args": "*"
+    },
+    {
+      "syscall": "bind",
+      "args": "*"
+    },
+    {
+      "syscall": "send",
+      "args": "*"
+    },
+    {
+      "syscall": "accept",
+      "args": "*"
+    },
+    {
+      "syscall": "close",
+      "args": "*"
+    },
+    {
+      "syscall": "receive",
+      "args": "*"
+    },
+    {
+      "syscall": "open",
+      "args": "*"
+    },
+    {
+      "syscall": "connect",
+      "args": "*"
+    }
+  ],
+  "urllib3.disable_warnings()": [
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "bind",
+      "args": "*"
+    },
+    {
+      "syscall": "close",
+      "args": "*"
+    }
+  ],
+  "socket.socket().send()": [
+    {
+      "syscall": "memory",
+      "args": "*"
+    },
+    {
+      "syscall": "read",
+      "args": "*"
+    },
+    {
+      "syscall": "bind",
+      "args": "*"
+    },
+    {
+      "syscall": "send",
+      "args": "*"
+    },
+    {
+      "syscall": "close",
+      "args": "*"
+    },
+    {
+      "syscall": "receive",
+      "args": "*"
+    },
+    {
+      "syscall": "open",
+      "args": "*"
+    },
+    {
+      "syscall": "connect",
+      "args": "*"
+    }
+  ],
+  "sys.stdout.write()": [
+    {
+      "syscall": "write",
+      "args": "stdout"
+    }
+  ],
+  "argparse.ArgumentParser().print_help()": [
+    {
+      "syscall": "write",
+      "args": "stdout"
+    }
+  ],
+  "os.system()": [
+    {
+      "syscall": "execute",
+      "args": "args"
+    }
+  ],
+  "subprocess.run()": [
+    {
+      "syscall": "spawn",
+      "args": "*"
+    },
+    {
+      "syscall": "execute",
+      "args": "args"
+    }
+  ],
+  "subprocess.Popen()": [
+    {
+      "syscall": "spawn",
+      "args": "*"
+    },
+    {
+      "syscall": "execute",
+      "args": "args"
+    }
+  ],
+  "subprocess.call()": [
+    {
+      "syscall": "spawn",
+      "args": "*"
+    },
+    {
+      "syscall": "execute",
+      "args": "args"
+    }
+  ],
+  "subprocess.check_call()": [
+    {
+      "syscall": "spawn",
+      "args": "*"
+    },
+    {
+      "syscall": "execute",
+      "args": "args"
+    }
+  ],
+  "subprocess.check_output()": [
+    {
+      "syscall": "spawn",
+      "args": "*"
+    },
+    {
+      "syscall": "execute",
+      "args": "args"
+    }
+  ],
+  "os.chmod()": [
+    {
+      "syscall": "chmod",
+      "args": "args"
+    }
+  ],
+  "os.rename()": [
+    {
+      "syscall": "rename",
+      "args": "args"
+    }
+  ],
+  "os.replace()": [
+    {
+      "syscall": "rename",
+      "args": "args"
+    }
+  ],
+  "os.remove()": [
+    {
+      "syscall": "unlink",
+      "args": "args"
+    }
+  ],
+  "os.unlink()": [
+    {
+      "syscall": "unlink",
+      "args": "args"
+    }
+  ],
+  "os.symlink()": [
+    {
+      "syscall": "symlink",
+      "args": "args"
+    }
+  ],
+  "os.link()": [
+    {
+      "syscall": "link",
+      "args": "args"
+    }
+  ],
+  "os.open()": [
+    {
+      "syscall": "open",
+      "args": "args"
+    },
+    {
+      "syscall": "read",
+      "args": "args"
+    },
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "requests.put()": [
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "requests.delete()": [
+    {
+      "syscall": "write",
+      "args": "args"
+    }
+  ],
+  "requests.head()": [
+    {
+      "syscall": "read",
+      "args": "args"
+    }
+  ],
+  "urllib.request.urlopen()": [
+    {
+      "syscall": "read",
+      "args": "args"
+    }
+  ]
+}
