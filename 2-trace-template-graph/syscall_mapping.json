@@ -1,340 +1,108 @@
 {
-  "print()": [
-    {
-      "syscall": "write",
-      "args": "stdout"
+  "_schema": {
+    "_comment": "Pi: the operation map (paper Sec 4.1, App A.1). Each normalized API identifier maps to an ordered list of operation records. A record's 'kind' selects how the extractor lowers it; 'arg' is the argument index carrying the operand (the selector), 'class' the event class in Sigma_sigma. This is a measured/authored table, keyed on (OS, host collector, runtime, library version); it never names a CVE. Kinds: http (target-view request under R*), spawn (process creation), file (host file I/O, mode-derived read/write), net (socket exchange), generic (object op via the type map).",
+    "_kinds": {
+      "http": "arg is the URL/path; class is read (GET/HEAD) or write (POST/PUT/DELETE/PATCH) as the collector records it",
+      "spawn": "arg is the command/executable; emits a child process vertex under the acting subject",
+      "file": "arg is the path; mode_arg (if present) picks read vs write, else 'class'",
+      "net": "arg is the destination; class is send/receive/connect",
+      "generic": "arg is the operand; 'syscall' names the type-map entry giving object type and direction"
     }
-  ],
-  "open()": [
-    {
-      "syscall": "open",
-      "args": "args"
-    },
-    {
-      "syscall": "read",
-      "args": "args"
-    },
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "Popen()": [
-    {
-      "syscall": "open",
-      "args": "args"
-    },
-    {
-      "syscall": "read",
-      "args": "args"
-    },
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "requests.get()": [
-    {
-      "syscall": "read",
-      "args": "args"
-    }
-  ],
-  "requests.post()": [
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "input()": [
-    {
-      "syscall": "read",
-      "args": "stdin"
-    }
-  ],
-  "requests.Session().post()": [
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "requests.Session()": [
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "bind",
-      "args": "*"
-    }
-  ],
-  "requests.Session().get()": [
-    {
-      "syscall": "read",
-      "args": "args"
-    }
-  ],
-  "requests.packages.urllib3.disable_warnings()": [
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "bind",
-      "args": "*"
-    },
-    {
-      "syscall": "close",
-      "args": "*"
-    }
-  ],
-  "socket.socket().recv()": [
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "receive",
-      "args": "*"
-    },
-    {
-      "syscall": "read",
-      "args": "*"
-    },
-    {
-      "syscall": "bind",
-      "args": "*"
-    },
-    {
-      "syscall": "send",
-      "args": "*"
-    },
-    {
-      "syscall": "accept",
-      "args": "*"
-    },
-    {
-      "syscall": "close",
-      "args": "*"
-    },
-    {
-      "syscall": "receive",
-      "args": "*"
-    },
-    {
-      "syscall": "open",
-      "args": "*"
-    },
-    {
-      "syscall": "connect",
-      "args": "*"
-    }
-  ],
-  "urllib3.disable_warnings()": [
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "bind",
-      "args": "*"
-    },
-    {
-      "syscall": "close",
-      "args": "*"
-    }
-  ],
-  "socket.socket().send()": [
-    {
-      "syscall": "memory",
-      "args": "*"
-    },
-    {
-      "syscall": "read",
-      "args": "*"
-    },
-    {
-      "syscall": "bind",
-      "args": "*"
-    },
-    {
-      "syscall": "send",
-      "args": "*"
-    },
-    {
-      "syscall": "close",
-      "args": "*"
-    },
-    {
-      "syscall": "receive",
-      "args": "*"
-    },
-    {
-      "syscall": "open",
-      "args": "*"
-    },
-    {
-      "syscall": "connect",
-      "args": "*"
-    }
-  ],
-  "sys.stdout.write()": [
-    {
-      "syscall": "write",
-      "args": "stdout"
-    }
-  ],
-  "argparse.ArgumentParser().print_help()": [
-    {
-      "syscall": "write",
-      "args": "stdout"
-    }
-  ],
-  "os.system()": [
-    {
-      "syscall": "execute",
-      "args": "args"
-    }
-  ],
-  "subprocess.run()": [
-    {
-      "syscall": "spawn",
-      "args": "*"
-    },
-    {
-      "syscall": "execute",
-      "args": "args"
-    }
-  ],
-  "subprocess.Popen()": [
-    {
-      "syscall": "spawn",
-      "args": "*"
-    },
-    {
-      "syscall": "execute",
-      "args": "args"
-    }
-  ],
-  "subprocess.call()": [
-    {
-      "syscall": "spawn",
-      "args": "*"
-    },
-    {
-      "syscall": "execute",
-      "args": "args"
-    }
-  ],
-  "subprocess.check_call()": [
-    {
-      "syscall": "spawn",
-      "args": "*"
-    },
-    {
-      "syscall": "execute",
-      "args": "args"
-    }
-  ],
-  "subprocess.check_output()": [
-    {
-      "syscall": "spawn",
-      "args": "*"
-    },
-    {
-      "syscall": "execute",
-      "args": "args"
-    }
-  ],
-  "os.chmod()": [
-    {
-      "syscall": "chmod",
-      "args": "args"
-    }
-  ],
-  "os.rename()": [
-    {
-      "syscall": "rename",
-      "args": "args"
-    }
-  ],
-  "os.replace()": [
-    {
-      "syscall": "rename",
-      "args": "args"
-    }
-  ],
-  "os.remove()": [
-    {
-      "syscall": "unlink",
-      "args": "args"
-    }
-  ],
-  "os.unlink()": [
-    {
-      "syscall": "unlink",
-      "args": "args"
-    }
-  ],
-  "os.symlink()": [
-    {
-      "syscall": "symlink",
-      "args": "args"
-    }
-  ],
-  "os.link()": [
-    {
-      "syscall": "link",
-      "args": "args"
-    }
-  ],
-  "os.open()": [
-    {
-      "syscall": "open",
-      "args": "args"
-    },
-    {
-      "syscall": "read",
-      "args": "args"
-    },
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "requests.put()": [
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "requests.delete()": [
-    {
-      "syscall": "write",
-      "args": "args"
-    }
-  ],
-  "requests.head()": [
-    {
-      "syscall": "read",
-      "args": "args"
-    }
-  ],
-  "urllib.request.urlopen()": [
-    {
-      "syscall": "read",
-      "args": "args"
-    }
-  ]
+  },
+
+  "requests.get()":     [{"kind": "http", "class": "read",  "arg": 0}],
+  "requests.head()":    [{"kind": "http", "class": "read",  "arg": 0}],
+  "requests.options()": [{"kind": "http", "class": "read",  "arg": 0}],
+  "requests.post()":    [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.put()":     [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.patch()":   [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.delete()":  [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.request()": [{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
+
+  "requests.Session().get()":    [{"kind": "http", "class": "read",  "arg": 0}],
+  "requests.Session().head()":   [{"kind": "http", "class": "read",  "arg": 0}],
+  "requests.Session().post()":   [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.Session().put()":    [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.Session().patch()":  [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.Session().delete()": [{"kind": "http", "class": "write", "arg": 0}],
+  "requests.Session().request()":[{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
+
+  "httpx.get()":    [{"kind": "http", "class": "read",  "arg": 0}],
+  "httpx.head()":   [{"kind": "http", "class": "read",  "arg": 0}],
+  "httpx.post()":   [{"kind": "http", "class": "write", "arg": 0}],
+  "httpx.put()":    [{"kind": "http", "class": "write", "arg": 0}],
+  "httpx.patch()":  [{"kind": "http", "class": "write", "arg": 0}],
+  "httpx.delete()": [{"kind": "http", "class": "write", "arg": 0}],
+  "httpx.Client().get()":  [{"kind": "http", "class": "read",  "arg": 0}],
+  "httpx.Client().post()": [{"kind": "http", "class": "write", "arg": 0}],
+
+  "urllib.request.urlopen()":  [{"kind": "http", "class": "read", "arg": 0}],
+  "urllib.request.Request()":  [{"kind": "http", "class": "read", "arg": 0}],
+  "urllib2.urlopen()":         [{"kind": "http", "class": "read", "arg": 0}],
+  "http.client.HTTPConnection().request()":  [{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
+  "http.client.HTTPSConnection().request()": [{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
+
+  "open()":         [{"kind": "file", "arg": 0, "mode_arg": 1}],
+  "io.open()":      [{"kind": "file", "arg": 0, "mode_arg": 1}],
+  "codecs.open()":  [{"kind": "file", "arg": 0, "mode_arg": 1}],
+  "os.open()":      [{"kind": "file", "arg": 0, "mode_arg": 1}],
+  "os.fdopen()":    [{"kind": "file", "arg": 0, "class": "write"}],
+  "pathlib.Path().open()":       [{"kind": "file", "arg": 0, "mode_arg": 0}],
+  "pathlib.Path().write_text()": [{"kind": "file", "arg": 0, "class": "write"}],
+  "pathlib.Path().write_bytes()":[{"kind": "file", "arg": 0, "class": "write"}],
+  "pathlib.Path().read_text()":  [{"kind": "file", "arg": 0, "class": "read"}],
+  "pathlib.Path().read_bytes()": [{"kind": "file", "arg": 0, "class": "read"}],
+
+  "os.remove()":  [{"kind": "generic", "syscall": "unlink", "arg": 0}],
+  "os.unlink()":  [{"kind": "generic", "syscall": "unlink", "arg": 0}],
+  "os.rename()":  [{"kind": "generic", "syscall": "rename", "arg": 1}],
+  "os.replace()": [{"kind": "generic", "syscall": "rename", "arg": 1}],
+  "os.chmod()":   [{"kind": "generic", "syscall": "chmod",  "arg": 0}],
+  "os.symlink()": [{"kind": "generic", "syscall": "symlink","arg": 1}],
+  "os.link()":    [{"kind": "generic", "syscall": "link",   "arg": 1}],
+  "os.mkdir()":   [{"kind": "generic", "syscall": "creat",  "arg": 0}],
+  "os.makedirs()":[{"kind": "generic", "syscall": "creat",  "arg": 0}],
+  "shutil.copy()":     [{"kind": "generic", "syscall": "write", "arg": 1}],
+  "shutil.copyfile()": [{"kind": "generic", "syscall": "write", "arg": 1}],
+  "shutil.copy2()":    [{"kind": "generic", "syscall": "write", "arg": 1}],
+  "shutil.move()":     [{"kind": "generic", "syscall": "rename","arg": 1}],
+  "shutil.rmtree()":   [{"kind": "generic", "syscall": "unlink","arg": 0}],
+
+  "subprocess.run()":          [{"kind": "spawn", "arg": 0}],
+  "subprocess.Popen()":        [{"kind": "spawn", "arg": 0}],
+  "subprocess.call()":         [{"kind": "spawn", "arg": 0}],
+  "subprocess.check_call()":   [{"kind": "spawn", "arg": 0}],
+  "subprocess.check_output()": [{"kind": "spawn", "arg": 0}],
+  "subprocess.getoutput()":        [{"kind": "spawn", "arg": 0}],
+  "subprocess.getstatusoutput()":  [{"kind": "spawn", "arg": 0}],
+  "os.system()":  [{"kind": "spawn", "arg": 0}],
+  "os.popen()":   [{"kind": "spawn", "arg": 0}],
+  "os.execv()":   [{"kind": "spawn", "arg": 0}],
+  "os.execve()":  [{"kind": "spawn", "arg": 0}],
+  "os.execvp()":  [{"kind": "spawn", "arg": 0}],
+  "os.spawnv()":  [{"kind": "spawn", "arg": 1}],
+  "os.spawnl()":  [{"kind": "spawn", "arg": 1}],
+  "pty.spawn()":  [{"kind": "spawn", "arg": 0}],
+
+  "socket.socket().connect()":  [{"kind": "net", "class": "connect", "arg": 0}],
+  "socket.socket().send()":     [{"kind": "net", "class": "send",    "arg": 0}],
+  "socket.socket().sendall()":  [{"kind": "net", "class": "send",    "arg": 0}],
+  "socket.socket().sendto()":   [{"kind": "net", "class": "send",    "arg": 0}],
+  "socket.socket().recv()":     [{"kind": "net", "class": "receive", "arg": 0}],
+  "socket.socket().recvfrom()": [{"kind": "net", "class": "receive", "arg": 0}],
+
+  "ftplib.FTP().storbinary()": [{"kind": "net", "class": "send",    "arg": 0}],
+  "ftplib.FTP().storlines()":  [{"kind": "net", "class": "send",    "arg": 0}],
+  "ftplib.FTP().retrbinary()": [{"kind": "net", "class": "receive", "arg": 0}],
+  "ftplib.FTP().retrlines()":  [{"kind": "net", "class": "receive", "arg": 0}],
+
+  "paramiko.SSHClient().exec_command()": [{"kind": "spawn", "arg": 0}],
+  "paramiko.SSHClient().open_sftp()":    [{"kind": "net", "class": "connect", "arg": 0}],
+
+  "input()":                                            [{"kind": "noop"}],
+  "sys.stdout.write()":                                 [{"kind": "noop"}],
+  "print()":                                            [{"kind": "noop"}],
+  "requests.packages.urllib3.disable_warnings()":       [{"kind": "noop"}],
+  "urllib3.disable_warnings()":                         [{"kind": "noop"}],
+  "argparse.ArgumentParser().print_help()":             [{"kind": "noop"}]
 }

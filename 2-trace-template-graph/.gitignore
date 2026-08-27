@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+graphs/
+sig_splunk/
+syscall_mapping.json.bak

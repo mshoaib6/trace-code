@@ -6,58 +6,242 @@ import networkx as nx
 from node import Node
 import os
 
+def _http_class_from_method(method_raw):
+    """read/write from an explicit HTTP method literal (default write)."""
+    import re as _re
+    m = _re.search(r"""['"]([A-Za-z]+)['"]""", str(method_raw))
+    if m and m.group(1).upper() in ("GET", "HEAD", "OPTIONS"):
+        return "read"
+    return "write"
+
+
+def _http_path_label(raw):
+    """Extract the target path+query from an HTTP call's first argument.
+
+    ``raw`` is the ast-unparsed argument, e.g. ``base_url + '/a/b?x=0'`` or
+    ``'http://host/a/b'``. We recover the first string literal beginning with a
+    slash: that is the path the target's own log records.
+
+    Wildcards are added only where the source says the value is uncertain, so
+    each one is derived from the PoC rather than chosen per CVE:
+
+    * trailing ``*`` always -- a target logs the query string and any suffix the
+      PoC appends at run time, which the literal does not fix.
+    * leading ``*`` only when the URL is built on a *variable* base
+      (``base_url + '/a/b'``). Then the application's mount prefix is unknown to
+      the PoC, and the target may record ``/wiki/a/b`` or ``/..;/a/b``. A URL
+      written as one complete literal fixes the whole path, so it gets none.
+
+    Returns None if no path literal exists.
+    """
+    import re as _re
+    s = str(raw)
+    # Scan the string literals in the expression; the request path lives in one.
+    for m in _re.finditer(r"""(['"])((?:[^'"\\]|\\.)*)\1""", s):
+        inner = m.group(2)
+        # A complete URL ("http://host/path?q"): the literal fixes the whole
+        # path, so no leading prefix is missing.
+        u = _re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+(/.*)$", inner)
+        if u:
+            return u.group(1) + "*"
+        # A URL literal with no path ("http://h") carries no resource; skip it.
+        if "://" in inner:
+            continue
+        # A path appearing in the literal ("/path", or "{base}/path" in an
+        # f-string): the mount prefix is unknown, so tolerate both ends. Require
+        # a single leading slash so a stray "//" is not read as a path.
+        p = _re.search(r"(/[^/\s][^\s]*)$", inner)
+        if p:
+            return "*" + p.group(1) + "*"
+    return None
+
+
+def _is_rooted_path(s):
+    """True when the literal fixes the whole path, so no prefix is missing."""
+    import re as _re
+    s = str(s)
+    return (s.startswith("/") or s.startswith("\\\\")
+            or bool(_re.match(r"^[A-Za-z]:[\\/]", s)))
+
+
+def _path_tolerance(label):
+    """Add a leading wildcard where the PoC does not fix the containing path.
+
+    A PoC that names a bare ``human2.aspx`` or ``CompleteFTPManager.exe`` does
+    not say which directory it lives in, while the target's log records the
+    absolute path (``C:\\MOVEitTransfer\\wwwroot\\human2.aspx``). The missing
+    prefix is a fact about the source, so the wildcard is derived, not chosen
+    per CVE. A literal that is already rooted, or already carries a wildcard,
+    is left exactly as written.
+    """
+    s = str(label)
+    if not s or "*" in s:
+        return s
+    if _is_rooted_path(s):
+        # A rooted path ending in a separator names a directory, not the file
+        # the operation lands on, so the tail is still open.
+        return s + "*" if s.endswith(("/", "\\")) else s
+    return "*" + s
+
+
+def _operand_label(raw):
+    """Label for a file/object operand, or None when nothing is resolvable.
+
+    Value propagation may leave an expression rather than a literal. Rather
+    than discard the whole operand, keep the part the PoC does fix and mark the
+    rest open: ``'/etc/password/' + name`` fixes the directory, so the template
+    keeps ``/etc/password/*`` instead of an anonymous wildcard that anchors
+    nothing. This follows the paper's rule that resolved values label vertices
+    and unresolved ones become wildcards -- applied per field, not per operand.
+    """
+    import re as _re
+    lbl = _clean_label(raw)
+    s = "" if lbl is None else str(lbl).strip()
+    if s and s != "*":
+        return _path_tolerance(s)
+    m = _re.search(r"""(['"])((?:[^'"\\]|\\.)*)\1""", str(raw))
+    if m and m.group(2):
+        lit = m.group(2)
+        out = _path_tolerance(lit)
+        return out if out.endswith("*") else out + "*"
+    return None
+
+
+def _exe_name(raw):
+    """Concrete executable label for a spawned child, or wildcard if dynamic."""
+    lbl = _clean_label(raw)
+    if lbl is None or str(lbl).strip() in ("", "*") or str(lbl).startswith("*"):
+        return "*.(executable)"
+    return _path_tolerance(str(lbl))
+
+
+def _file_verb(mode_arg):
+    """read/write from an open() mode argument (default read)."""
+    m = str(mode_arg).strip().strip("'\"").lower() if mode_arg is not None else "r"
+    if any(c in m for c in ("w", "a", "x", "+")):
+        return "write"
+    return "read"
+
+
+def _arg_at(args, i):
+    return args[i] if (args and 0 <= i < len(args)) else None
+
+
+def _fresh_wildcard():
+    global star_index
+    w = f"*{star_index}"
+    star_index += 1
+    return w
+
+
 def handle_function(function_name, args, output_graph, base_process_node):
-    global syscalls, star_index
-    for syscall in syscalls[function_name]:
-        syscall_name = syscall['syscall']
-        arg_string = syscall['args']
-        if syscall_name in ("open", "openat"):
-            if arg_string == "*":
-                filename = f"*{star_index}"
-                file_node = Node(filename, 'File', filename)
-                star_index += 1
-                output_graph.add_node(filename, node_info=file_node)
-                output_graph.add_edge(base_process_node, filename, syscall=syscall_name)
-                output_graph.add_edge(filename, base_process_node, syscall=syscall_name)
+    """Lower one call into template operations, driven by Pi's operation records.
+
+    Each record's 'kind' selects the lowering; the map, not this code, holds
+    which APIs are requests, spawns, file I/O, socket exchanges or generic
+    object operations. Runner-side operations of a remote PoC are discarded by
+    R*, so under remote locus only 'http' records survive.
+    """
+    global types, syscalls, star_index, locus
+
+    for rec in syscalls.get(function_name, []):
+        kind = rec.get("kind")
+        if kind == "noop":
+            continue
+
+        # --- Remote target-view (R*): the request the monitored host records. ---
+        if kind == "http":
+            if locus != "remote":
+                continue  # a local PoC's delivery is handled elsewhere; skip here
+            if "method_arg" in rec:
+                verb = _http_class_from_method(_arg_at(args, rec["method_arg"]))
             else:
-                mode = args[-1]
-                filename = args[0]
-                file_node = Node(filename, 'File', filename)
-                # Edge convention: process -> file (the process performs the I/O).
-                # Matches the shipped TRACE sig/prov graph convention.
-                if "r" in mode or "t" in mode:
-                    output_graph.add_node(filename, node_info=file_node)
-                    output_graph.add_edge(base_process_node, filename, syscall=syscall_name)
-                elif "w" in mode or "a" in mode or "x" in mode:
-                    output_graph.add_node(filename, node_info=file_node)
-                    output_graph.add_edge(base_process_node, filename, syscall=syscall_name)
-                elif "+" in mode:
-                    output_graph.add_node(filename, node_info=file_node)
-                    output_graph.add_edge(base_process_node, filename, syscall=syscall_name)
-        else:
+                verb = rec.get("class", "write")
+            url = _arg_at(args, rec.get("arg", 0))
+            path = _http_path_label(url) if url is not None else None
+            if path is None:
+                path = _fresh_wildcard()
+            client_id, host_id = "net_client", "proc_host"
+            if client_id not in output_graph:
+                output_graph.add_node(client_id, node_info=Node(client_id, "Socket", "*"))
+            if host_id not in output_graph:
+                output_graph.add_node(host_id, node_info=Node(host_id, "Process", "*"))
+                output_graph.add_edge(client_id, host_id, syscall="access")
+            output_graph.add_node(path, node_info=Node(path, "File", path))
+            output_graph.add_edge(host_id, path, syscall=verb)
+            continue
+
+        # Everything below is runner/asset-side: only for a local-locus PoC.
+        if locus == "remote":
+            continue
+
+        # --- Process creation: spawn a child under the acting subject. ---
+        if kind == "spawn":
+            cmd = _arg_at(args, rec.get("arg", 0))
+            child_label = _exe_name(cmd) if cmd is not None else "*.(executable)"
+            child_id = f"child{star_index}"
+            star_index += 1
+            output_graph.add_node(child_id, node_info=Node(child_id, "Process", child_label))
+            output_graph.add_edge(base_process_node, child_id, syscall="create")
+            continue
+
+        # --- File I/O on the running host: one edge, read or write. ---
+        if kind == "file":
+            path_arg = _arg_at(args, rec.get("arg", 0))
+            if path_arg is None:
+                continue
+            label = _operand_label(path_arg)
+            if "mode_arg" in rec:
+                verb = _file_verb(_arg_at(args, rec["mode_arg"]))
+            else:
+                verb = rec.get("class", "read")
+            if label is None or str(label).strip() in ("", "*"):
+                fid = _fresh_wildcard()
+                label = fid
+            else:
+                fid = str(label)
+            output_graph.add_node(fid, node_info=Node(fid, "File", label))
+            output_graph.add_edge(base_process_node, fid, syscall=verb)
+            continue
+
+        # --- Socket exchange: connect/send/receive to a network peer. ---
+        if kind == "net":
+            dest = _arg_at(args, rec.get("arg", 0))
+            label = _operand_label(dest) if dest is not None else None
+            if label is None or str(label).strip() in ("", "*"):
+                nid = _fresh_wildcard()
+                label = nid
+            else:
+                nid = str(label)
+            output_graph.add_node(nid, node_info=Node(nid, "Socket", label))
+            cls = rec.get("class", "connect")
+            if cls == "receive":
+                output_graph.add_edge(nid, base_process_node, syscall=cls)
+            else:
+                output_graph.add_edge(base_process_node, nid, syscall=cls)
+            continue
+
+        # --- Generic object operation via the type map (chmod/rename/...). ---
+        if kind == "generic":
+            syscall_name = rec.get("syscall")
+            if syscall_name not in types:
+                continue
             object_type, direction = types[syscall_name]
-            if direction != "none":
-                if arg_string == 'args':
-                    if not args:
-                        continue
-                    arg_string = args[0]
-                    object_node = Node(arg_string, object_type, arg_string)
-                    output_graph.add_node(arg_string, node_info=object_node)
-                    target_id = arg_string
-                elif arg_string == '*':
-                    filename = f"*{star_index}"
-                    star_index += 1
-                    object_node = Node(filename, object_type, filename)
-                    output_graph.add_node(filename, node_info=object_node)
-                    target_id = filename
-                else:
-                    object_node = Node(arg_string, object_type, arg_string)
-                    output_graph.add_node(arg_string, node_info=object_node)
-                    target_id = arg_string
-                if direction == "in":
-                    output_graph.add_edge(target_id, base_process_node, syscall=syscall_name)
-                else:
-                    output_graph.add_edge(base_process_node, target_id, syscall=syscall_name)
+            if direction == "none":
+                continue
+            operand = _arg_at(args, rec.get("arg", 0))
+            label = _operand_label(operand) if operand is not None else None
+            if label is None or str(label).strip() in ("", "*"):
+                target_id = _fresh_wildcard()
+                label = target_id
+            else:
+                target_id = str(label)
+            output_graph.add_node(target_id, node_info=Node(target_id, object_type, label))
+            if direction == "in":
+                output_graph.add_edge(target_id, base_process_node, syscall=syscall_name)
+            else:
+                output_graph.add_edge(base_process_node, target_id, syscall=syscall_name)
+            continue
 
         
 def handle_tree(tree, filename, foldername, output_graph, base_process_node):
@@ -308,14 +492,14 @@ def _canonical_graph_signature(graph):
         info = data.get("node_info")
         if info is None:
             continue
-        nodes.append((info.type, _clean_label(info.label)))
+        nodes.append((info.type, str(info.label)))
     for u, v, data in graph.edges(data=True):
         nu = graph.nodes[u].get("node_info")
         nv = graph.nodes[v].get("node_info")
         if nu is None or nv is None:
             continue
         edges.append((
-            _clean_label(nu.label), _clean_label(nv.label),
+            str(nu.label), str(nv.label),
             str(data.get("syscall", "")),
         ))
     return tuple(sorted(nodes)), tuple(sorted(edges))
@@ -329,37 +513,37 @@ def write_sig_txt(graph, out_path):
       * drops pure-wildcard file/net nodes with label '*' (no useful anchor)
       * prunes nodes that are left with no edges after filtering
     """
-    # First, collect raw nodes/edges and drop trivial-wildcard noise ('*', '*0', ...).
-    # We keep the base process '*.*' and any concrete labels.
+    # Drop only *anonymous operands*: call sites whose operand the reader could
+    # not resolve. Per the paper these simply do not become operations, so the
+    # template shrinks. They are exactly the nodes whose id has the '*N' form
+    # minted above. Structural wildcards the target view needs -- the remote
+    # client/host pair and the '*.(executable)' runner -- carry real ids and
+    # survive, since a wildcard still constrains structure.
     import re as _re
-    _wildcard_rx = _re.compile(r"^\*\d*$")
+    _anon_id_rx = _re.compile(r"^\*\d*$")
     keep = {}
     for nid, data in graph.nodes(data=True):
         info = data.get("node_info")
         if info is None:
             continue
-        label = _clean_label(info.label).strip()
-        if info.label != "*.*" and _wildcard_rx.match(label):
+        if _anon_id_rx.match(str(nid)):
             continue
         keep[nid] = info
 
     normalized_edges = []
+    seen_edges = set()
     for u, v, data in graph.edges(data=True):
         if u not in keep or v not in keep:
             continue
         sc = data.get("syscall", "other")
         sc = _SYSCALL_NORMALIZE.get(sc, sc)
+        if (u, v, sc) in seen_edges:
+            continue
+        seen_edges.add((u, v, sc))
         normalized_edges.append((u, v, sc))
 
-    # Drop nodes with no remaining edges (orphan wildcards after filtering).
+    # Drop nodes with no remaining edges (orphans after filtering).
     active = {u for u, _, _ in normalized_edges} | {v for _, v, _ in normalized_edges}
-    # Keep the base process vertex even if edgeless so the graph has an anchor.
-    base_id = None
-    for nid, info in keep.items():
-        if info.type == "Process" and info.label == "*.*":
-            base_id = nid
-            active.add(nid)
-            break
     keep = {k: v for k, v in keep.items() if k in active}
 
     id_map = {}
@@ -370,7 +554,7 @@ def write_sig_txt(graph, out_path):
     lines = []
     for nid, info in keep.items():
         t = _NODE_TYPE_TO_SIG.get(info.type, "file")
-        lines.append(f"NODE {id_map[nid]} {t} {_clean_label(info.label)}")
+        lines.append(f"NODE {id_map[nid]} {t} {info.label}")
     for u, v, sc in normalized_edges:
         if u in id_map and v in id_map:
             lines.append(f"EDGE {id_map[u]} {id_map[v]} {sc}")
@@ -386,9 +570,30 @@ def write_sig_txt(graph, out_path):
 _MAX_TREES = 64
 
 
-def convert_graph(filename, foldername, out_format="txt"):
-    """Generate template graphs. out_format='txt' (stage-3 ready) or 'dot' (legacy pydot)."""
-    global types, syscalls
+def _detect_locus(tree):
+    """Infer invocation locus (paper's manifest) when not given explicitly.
+
+    A PoC whose observable behavior is an HTTP request to a target is
+    remote-locus (only the request transfers to the asset view); one that
+    operates on the running host (file/process) is local-locus.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = None
+            f = node.func
+            if isinstance(f, ast.Attribute):
+                last = f.attr
+                if last in ("get", "post", "put", "delete", "head", "patch", "urlopen"):
+                    return "remote"
+    return "local"
+
+
+def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
+    """Generate template graphs. out_format='txt' (stage-3 ready) or 'dot' (legacy pydot).
+
+    locus_mode: 'local', 'remote', or 'auto' (infer per the paper's manifest).
+    """
+    global types, syscalls, locus
     tree = clean_file(filename, foldername)
     if tree is None:
         return 0
@@ -400,14 +605,19 @@ def convert_graph(filename, foldername, out_format="txt"):
     with open('syscall_mapping.json') as syscall_file:
         syscalls = json.load(syscall_file)
 
+    locus = locus_mode if locus_mode in ("local", "remote") else _detect_locus(tree)
+
     os.makedirs('graphs', exist_ok=True)
-    process_id = "*.*"
+    # Local locus anchors on the runner process; remote locus mints a target
+    # host inside handle_function and leaves the runner out of the template.
+    process_id = "*.(executable)"
     written = 0
     seen_signatures = set()  # in-run dedupe across variants
     for idx, tree in enumerate(trees):
-        output_graph = nx.DiGraph()
+        output_graph = nx.MultiDiGraph()
         base_process_node = Node(process_id, 'Process', process_id)
-        output_graph.add_node(process_id, node_info=base_process_node)
+        if locus == "local":
+            output_graph.add_node(process_id, node_info=base_process_node)
         handle_tree(tree, filename, foldername, output_graph, process_id)
 
         # Skip graphs that carry no syscall edges (pure control-flow stubs).
