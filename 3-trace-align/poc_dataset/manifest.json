@@ -1,0 +1,137 @@
+{
+  "CVE-2017-0199": {
+    "locus": "local"
+  },
+  "CVE-2017-11882": {
+    "locus": "local"
+  },
+  "CVE-2018-8174": {
+    "locus": "local"
+  },
+  "CVE-2019-16116": {
+    "locus": "local"
+  },
+  "CVE-2021-1675": {
+    "locus": "local"
+  },
+  "CVE-2021-22146": {
+    "locus": "local"
+  },
+  "CVE-2021-29995": {
+    "locus": "local"
+  },
+  "CVE-2021-40444": {
+    "locus": "local"
+  },
+  "CVE-2022-1388": {
+    "locus": "remote"
+  },
+  "CVE-2022-22965": {
+    "locus": "remote"
+  },
+  "CVE-2022-25237": {
+    "locus": "local"
+  },
+  "CVE-2022-40684": {
+    "locus": "remote"
+  },
+  "CVE-2022-42889": {
+    "locus": "remote"
+  },
+  "CVE-2023-20198": {
+    "locus": "remote"
+  },
+  "CVE-2023-22515": {
+    "locus": "remote"
+  },
+  "CVE-2023-22527": {
+    "locus": "remote"
+  },
+  "CVE-2023-22855": {
+    "locus": "local"
+  },
+  "CVE-2023-23397": {
+    "locus": "local"
+  },
+  "CVE-2023-23488": {
+    "locus": "local"
+  },
+  "CVE-2023-24489": {
+    "locus": "remote"
+  },
+  "CVE-2023-29298": {
+    "locus": "remote"
+  },
+  "CVE-2023-29357": {
+    "locus": "remote"
+  },
+  "CVE-2023-35078": {
+    "locus": "remote"
+  },
+  "CVE-2023-35081": {
+    "locus": "remote"
+  },
+  "CVE-2023-35082": {
+    "locus": "remote"
+  },
+  "CVE-2023-3519": {
+    "locus": "remote"
+  },
+  "CVE-2023-36844": {
+    "locus": "remote"
+  },
+  "CVE-2023-36845": {
+    "locus": "remote"
+  },
+  "CVE-2023-36846": {
+    "locus": "remote"
+  },
+  "CVE-2023-36847": {
+    "locus": "remote"
+  },
+  "CVE-2023-40044": {
+    "locus": "remote"
+  },
+  "CVE-2023-4966": {
+    "locus": "remote"
+  },
+  "CVE-2024-1708": {
+    "locus": "local"
+  },
+  "CVE-2024-1709": {
+    "locus": "remote"
+  },
+  "CVE-2024-21683": {
+    "locus": "remote"
+  },
+  "CVE-2024-23897": {
+    "locus": "remote"
+  },
+  "CVE-2024-25600": {
+    "locus": "remote"
+  },
+  "CVE-2024-4040": {
+    "locus": "remote"
+  },
+  "CVE-2024-43583": {
+    "locus": "local"
+  },
+  "CVE-2024-5806": {
+    "locus": "local"
+  },
+  "CVE-2024-7593": {
+    "locus": "remote"
+  },
+  "CVE-2025-31161": {
+    "locus": "remote"
+  },
+  "CVE-2025-31324": {
+    "locus": "local"
+  },
+  "CVE-2025-5777": {
+    "locus": "remote"
+  },
+  "CVE-2025-8088": {
+    "locus": "local"
+  }
+}

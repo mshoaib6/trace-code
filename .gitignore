@@ -1,2 +1,4 @@
 .DS_Store
 .AppleDouble
+output.txt
+output-all_pairs.txt

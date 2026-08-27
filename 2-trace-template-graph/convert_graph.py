@@ -56,6 +56,37 @@ def _http_path_label(raw):
     return None
 
 
+def _http_resource_label(raw):
+    r"""Label for the request a URL expression denotes.
+
+    Folds the expression (so a URL assembled from literals and variables keeps
+    each concrete run and wildcards the rest -- ``base + '?command=zip' + p +
+    'INCLUDE'`` -> ``*command=zip*INCLUDE*``), decodes escapes, and strips a
+    leading ``scheme://host`` so only the path+query the target records remains.
+    A query-only anchor (``PHPRC=``) is kept even without a leading slash, since
+    collectors log the whole request line. Returns None if nothing is fixed.
+    """
+    import re as _re
+    folded = _fold_str(raw)
+    if folded is None:
+        return None
+    folded = _re.sub(r"^\*?[a-zA-Z][a-zA-Z0-9+.-]*://[^/*]*", "", folded)
+    folded = folded.strip()
+    if not folded or folded.strip("*") == "":
+        return None
+    if not folded.startswith("*"):
+        folded = "*" + folded
+    if not folded.endswith("*"):
+        folded = folded + "*"
+    return folded
+
+
+def _http_endpoint_label(raw):
+    """Peer label for a local-locus request (delivery): the URL's distinctive
+    path/query, which occurs in the endpoint the trace records."""
+    return _http_resource_label(raw)
+
+
 def _is_rooted_path(s):
     """True when the literal fixes the whole path, so no prefix is missing."""
     import re as _re
@@ -253,26 +284,42 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
         if kind == "noop":
             continue
 
-        # --- Remote target-view (R*): the request the monitored host records. ---
+        # --- HTTP request ---
         if kind == "http":
-            if locus != "remote":
-                continue  # a local PoC's delivery is handled elsewhere; skip here
-            if "method_arg" in rec:
-                verb = _http_class_from_method(_arg_at(args, rec["method_arg"]) or kwargs.get("method"))
-            else:
-                verb = rec.get("class", "write")
             url = _resolve_operand(args, kwargs, rec, "http")
-            path = _http_path_label(url) if url is not None else None
-            if path is None:
-                path = _fresh_wildcard()
-            client_id, host_id = "net_client", "proc_host"
-            if client_id not in output_graph:
-                output_graph.add_node(client_id, node_info=Node(client_id, "Socket", "*"))
-            if host_id not in output_graph:
-                output_graph.add_node(host_id, node_info=Node(host_id, "Process", "*"))
-                output_graph.add_edge(client_id, host_id, syscall="access")
-            output_graph.add_node(path, node_info=Node(path, "File", path))
-            output_graph.add_edge(host_id, path, syscall=verb)
+            if locus == "remote":
+                # Target view (R*): the request the monitored host records, as a
+                # resource the vulnerable service reads or writes.
+                if "method_arg" in rec:
+                    verb = _http_class_from_method(_arg_at(args, rec["method_arg"]) or kwargs.get("method"))
+                else:
+                    verb = rec.get("class", "write")
+                path = _http_resource_label(url) if url is not None else None
+                if path is None:
+                    path = _fresh_wildcard()
+                client_id, host_id = "net_client", "proc_host"
+                if client_id not in output_graph:
+                    output_graph.add_node(client_id, node_info=Node(client_id, "Socket", "*"))
+                if host_id not in output_graph:
+                    output_graph.add_node(host_id, node_info=Node(host_id, "Process", "*"))
+                    output_graph.add_edge(client_id, host_id, syscall="access")
+                output_graph.add_node(path, node_info=Node(path, "File", path))
+                output_graph.add_edge(host_id, path, syscall=verb)
+            else:
+                # Local locus: the request is a transmission the runner emits
+                # (delivery). It is a connection to a peer named by the URL, not
+                # a target-side resource -- the runner never records the service
+                # reading it. Represented as the sig's local shape: an outbound
+                # connection between the runner and the endpoint.
+                peer = _http_endpoint_label(url) if url is not None else None
+                if peer is None:
+                    peer = _fresh_wildcard()
+                output_graph.add_node(peer, node_info=Node(peer, "Socket", peer))
+                # Outbound only: the runner reaches the endpoint. A reverse edge
+                # would demand the endpoint reach back to the runner, which need
+                # not hold when the actual connector is a descendant process the
+                # k-tolerant path reaches forward but not in reverse.
+                output_graph.add_edge(base_process_node, peer, syscall="connect")
             continue
 
         # Everything below is runner/asset-side: only for a local-locus PoC.
