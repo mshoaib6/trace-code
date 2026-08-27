@@ -94,17 +94,63 @@ def _operand_label(raw):
     nothing. This follows the paper's rule that resolved values label vertices
     and unresolved ones become wildcards -- applied per field, not per operand.
     """
-    import re as _re
-    lbl = _clean_label(raw)
-    s = "" if lbl is None else str(lbl).strip()
-    if s and s != "*":
-        return _path_tolerance(s)
-    m = _re.search(r"""(['"])((?:[^'"\\]|\\.)*)\1""", str(raw))
-    if m and m.group(2):
-        lit = m.group(2)
-        out = _path_tolerance(lit)
-        return out if out.endswith("*") else out + "*"
-    return None
+    folded = _fold_str(raw)
+    if folded is None or folded.strip("*") == "":
+        return None
+    out = _path_tolerance(folded)
+    return out if out.endswith("*") else out + "*"
+
+
+def _fold_str(raw):
+    r"""Fold a string-valued expression into a partially-concrete label.
+
+    Value propagation resolves what the PoC fixes and wildcards the rest, per
+    field (paper Sec 4.3). Re-parsing the (already value-substituted) expression
+    lets the AST decode escapes for us -- ``'\\App_Extensions\\'`` becomes the
+    value ``\App_Extensions\`` -- and lets us keep every concrete piece of a
+    concatenation while marking each unresolved operand ``*``:
+
+        share + '\\' + 'mimispool.dll'   ->   *\mimispool.dll
+        install + '\\App_Extensions\\' + name + '.aspx'  ->  *\App_Extensions\*.aspx
+
+    A single ``*`` (nothing resolvable) returns "" so the caller drops it to an
+    anonymous operand rather than an anchor that matches every path. Returns
+    None if the expression will not parse.
+    """
+    import ast as _ast
+    try:
+        node = _ast.parse(str(raw), mode="eval").body
+    except Exception:
+        return None
+
+    parts = []
+
+    def emit(tok):
+        if tok == "*" and parts and parts[-1] == "*":
+            return
+        parts.append(tok)
+
+    def walk(n):
+        if isinstance(n, _ast.BinOp) and isinstance(n.op, _ast.Add):
+            walk(n.left)
+            walk(n.right)
+        elif isinstance(n, _ast.Constant) and isinstance(n.value, str):
+            emit(n.value)
+        elif isinstance(n, _ast.JoinedStr):
+            for v in n.values:
+                if isinstance(v, _ast.Constant) and isinstance(v.value, str):
+                    emit(v.value)
+                else:
+                    emit("*")
+        elif isinstance(n, _ast.BinOp) and isinstance(n.op, _ast.Mod):
+            walk(n.left)  # "%s/foo" % x keeps the format string's literal
+        else:
+            emit("*")
+
+    walk(node)
+    s = "".join(parts)
+    # Strip a scheme+host if a full URL slipped through (paths only).
+    return s
 
 
 def _exe_name(raw):
@@ -125,6 +171,30 @@ def _file_verb(mode_arg):
 
 def _arg_at(args, i):
     return args[i] if (args and 0 <= i < len(args)) else None
+
+
+def _net_peer_label(raw):
+    """Peer endpoint label from a socket address argument.
+
+    ``connect((host, port))`` and ``sendto(data, (host, port))`` carry the peer
+    as an ``(host, port)`` tuple. Resolve each component the value propagation
+    fixed: a literal host/port becomes ``host:port``; an unresolved host is a
+    wildcard. Returns None when nothing resolvable is present.
+    """
+    import re as _re
+    s = str(raw).strip()
+    m = _re.match(r"^\(\s*(.+?)\s*,\s*(.+?)\s*\)$", s)
+    if m:
+        host = _clean_label(m.group(1))
+        port = m.group(2).strip().strip("'\"")
+        host = "*" if (host is None or str(host).strip() in ("", "*")) else str(host)
+        if _re.fullmatch(r"\d+", port):
+            return f"{host}:{port}"
+        return host if host != "*" else None
+    lbl = _clean_label(raw)
+    if lbl is None or str(lbl).strip() in ("", "*"):
+        return None
+    return str(lbl)
 
 
 def _fresh_wildcard():
@@ -206,8 +276,14 @@ def handle_function(function_name, args, output_graph, base_process_node):
 
         # --- Socket exchange: connect/send/receive to a network peer. ---
         if kind == "net":
-            dest = _arg_at(args, rec.get("arg", 0))
-            label = _operand_label(dest) if dest is not None else None
+            # Only address-bearing calls (connect, sendto) name the peer; send,
+            # recv and file transfers act on the already-established connection,
+            # so their operand is payload, never an endpoint. Labelling a peer
+            # with payload bytes would invent an endpoint the target never saw.
+            if rec.get("peer"):
+                label = _net_peer_label(_arg_at(args, rec.get("arg", 0)))
+            else:
+                label = None
             if label is None or str(label).strip() in ("", "*"):
                 nid = _fresh_wildcard()
                 label = nid
