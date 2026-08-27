@@ -94,7 +94,18 @@ def process_call_node(node, function_mapping, variable_mapping):
             # Python 3.9 ast.unparse chokes on f-strings containing backslashes.
             # Treat the arg as an opaque wildcard so extraction can continue.
             args.append("*")
-    return function_name, args
+    # Keyword arguments carry the operand just as often as positional ones in
+    # real PoCs (requests.get(url=..., data=...)); keep them by name so the
+    # operation map can select url/data/path whichever form the call uses.
+    kwargs = {}
+    for kw in node.keywords:
+        if kw.arg is None:
+            continue  # **kwargs splat: no name to key on
+        try:
+            kwargs[kw.arg] = ast.unparse(kw.value)
+        except ValueError:
+            kwargs[kw.arg] = "*"
+    return function_name, args, kwargs
 
 def is_user_defined_module(foldername, module_name):
     foldername = os.path.join('total-folder', foldername)

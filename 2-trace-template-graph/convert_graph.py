@@ -173,6 +173,40 @@ def _arg_at(args, i):
     return args[i] if (args and 0 <= i < len(args)) else None
 
 
+# Conventional keyword names carrying the operand for each kind, so a call
+# written requests.get(url=...) or open(file=...) resolves like the positional
+# form. The map may also name one explicitly via a record's "kwarg" field.
+_KIND_KWARGS = {
+    "http": ("url",),
+    "file": ("file", "name", "path"),
+    "spawn": ("args", "cmd"),
+    "net": ("address",),
+    "generic": (),
+}
+
+
+def _resolve_operand(args, kwargs, rec, kind):
+    """The operand for this record, from the positional slot or a keyword.
+
+    Real PoCs pass the observable value either positionally or by keyword; we
+    try the record's positional index first, then an explicit ``kwarg`` name,
+    then the conventional keyword names for the kind.
+    """
+    i = rec.get("arg")
+    if i is not None:
+        v = _arg_at(args, i)
+        if v is not None:
+            return v
+    names = []
+    if "kwarg" in rec:
+        names.append(rec["kwarg"])
+    names.extend(_KIND_KWARGS.get(kind, ()))
+    for n in names:
+        if n in kwargs:
+            return kwargs[n]
+    return None
+
+
 def _net_peer_label(raw):
     """Peer endpoint label from a socket address argument.
 
@@ -204,7 +238,7 @@ def _fresh_wildcard():
     return w
 
 
-def handle_function(function_name, args, output_graph, base_process_node):
+def handle_function(function_name, args, kwargs, output_graph, base_process_node):
     """Lower one call into template operations, driven by Pi's operation records.
 
     Each record's 'kind' selects the lowering; the map, not this code, holds
@@ -224,10 +258,10 @@ def handle_function(function_name, args, output_graph, base_process_node):
             if locus != "remote":
                 continue  # a local PoC's delivery is handled elsewhere; skip here
             if "method_arg" in rec:
-                verb = _http_class_from_method(_arg_at(args, rec["method_arg"]))
+                verb = _http_class_from_method(_arg_at(args, rec["method_arg"]) or kwargs.get("method"))
             else:
                 verb = rec.get("class", "write")
-            url = _arg_at(args, rec.get("arg", 0))
+            url = _resolve_operand(args, kwargs, rec, "http")
             path = _http_path_label(url) if url is not None else None
             if path is None:
                 path = _fresh_wildcard()
@@ -247,7 +281,7 @@ def handle_function(function_name, args, output_graph, base_process_node):
 
         # --- Process creation: spawn a child under the acting subject. ---
         if kind == "spawn":
-            cmd = _arg_at(args, rec.get("arg", 0))
+            cmd = _resolve_operand(args, kwargs, rec, "spawn")
             child_label = _exe_name(cmd) if cmd is not None else "*.(executable)"
             child_id = f"child{star_index}"
             star_index += 1
@@ -257,12 +291,12 @@ def handle_function(function_name, args, output_graph, base_process_node):
 
         # --- File I/O on the running host: one edge, read or write. ---
         if kind == "file":
-            path_arg = _arg_at(args, rec.get("arg", 0))
+            path_arg = _resolve_operand(args, kwargs, rec, "file")
             if path_arg is None:
                 continue
             label = _operand_label(path_arg)
             if "mode_arg" in rec:
-                verb = _file_verb(_arg_at(args, rec["mode_arg"]))
+                verb = _file_verb(_arg_at(args, rec["mode_arg"]) or kwargs.get("mode"))
             else:
                 verb = rec.get("class", "read")
             if label is None or str(label).strip() in ("", "*"):
@@ -281,7 +315,7 @@ def handle_function(function_name, args, output_graph, base_process_node):
             # so their operand is payload, never an endpoint. Labelling a peer
             # with payload bytes would invent an endpoint the target never saw.
             if rec.get("peer"):
-                label = _net_peer_label(_arg_at(args, rec.get("arg", 0)))
+                label = _net_peer_label(_resolve_operand(args, kwargs, rec, "net"))
             else:
                 label = None
             if label is None or str(label).strip() in ("", "*"):
@@ -305,7 +339,7 @@ def handle_function(function_name, args, output_graph, base_process_node):
             object_type, direction = types[syscall_name]
             if direction == "none":
                 continue
-            operand = _arg_at(args, rec.get("arg", 0))
+            operand = _resolve_operand(args, kwargs, rec, "generic")
             label = _operand_label(operand) if operand is not None else None
             if label is None or str(label).strip() in ("", "*"):
                 target_id = _fresh_wildcard()
@@ -435,13 +469,13 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                 #     print("Unparse: ", ast.unparse(node))
                 #     exit(1)
         if isinstance(node, ast.Call):
-            function_name, args = process_call_node(node, function_mapping, variable_mapping)
-            
+            function_name, args, kwargs = process_call_node(node, function_mapping, variable_mapping)
+
             # Check that function isn't user defined
             if function_is_relevant(function_name, user_defined_functions, user_defined_modules_and_functions, function_mapping):
                 # handle function call
                 if function_name in syscalls:
-                    handle_function(function_name, args, output_graph, base_process_node)
+                    handle_function(function_name, args, kwargs, output_graph, base_process_node)
 
 def normalize_syscall_value(value):
     if isinstance(value, list):
