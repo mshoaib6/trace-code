@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import re
 from typing import Dict, List, Optional, Tuple
 
@@ -203,10 +204,98 @@ def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[T
     return hits
 
 
+# Classes that record one process creating another. A staging prefix is a
+# descendancy chain, so only these may precede a terminal occurrence.
+_PROCESS_CREATION = {"create", "spawn", "fork", "exec", "procstart"}
+
+# On by default: path refinement as specified -- a simple path of at most k
+# intermediate vertices whose terminal edge is of class sigma and whose every
+# preceding edge is a process creation. The alternative below accepts a
+# sigma-class edge anywhere along the path, with any intermediate class and
+# repeated vertices, which lets a template reach an object through activity
+# that has no relation to the subject it matched. Set TRACE_ALIGN_STRICT_PATH=0
+# to restore it.
+_STRICT_PATH = os.environ.get("TRACE_ALIGN_STRICT_PATH", "1") not in ("0", "false", "False")
+
+
+def _service_endpoints(G: nx.MultiDiGraph, proc: str) -> frozenset:
+    """The network endpoints a process is recorded serving on."""
+    return frozenset(v for _, v, d in G.out_edges(proc, data=True)
+                     if G.nodes.get(v, {}).get("type") == "net"
+                     and str(d.get("syscall", "")) == "connect")
+
+
+def _same_service(G: nx.MultiDiGraph, u: str, w: str) -> bool:
+    """True when two process vertices are one service under two names.
+
+    A collector may record one server under several images -- a bare host name
+    and a fully qualified one, or one name per virtual host -- so a single
+    service's operations arrive split across process vertices. They are the same
+    service when the capture shows both serving the *same* network endpoint:
+    one listening socket cannot belong to two hosts. Crossing that identity is
+    not staging, so it does not consume a descendancy hop.
+    """
+    if u == w:
+        return False
+    if G.nodes.get(u, {}).get("type") != "process" or G.nodes.get(w, {}).get("type") != "process":
+        return False
+    shared = _service_endpoints(G, u) & _service_endpoints(G, w)
+    return bool(shared)
+
+
+def _strict_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, k: int,
+                 template_request: bool) -> bool:
+    """The specified refinement rule.
+
+    Each template edge takes a simple directed path of at most k intermediate
+    vertices whose terminal occurrence is of class sigma, every preceding edge a
+    process creation -- the prefix keeps the two matched entities' relation
+    intact by allowing staging only through subject-spawned processes.
+
+    Gapless classes have no prefix at all: an edge *into* the subject, such as
+    an inbound protocol record, has no incoming descendancy to stage through,
+    so its path is the terminal occurrence alone.
+    """
+    def terminal(u, v):
+        return any(_sc_eq(str(d.get("syscall", "")), syscall, G, u, v, template_request)
+                   for _, w, d in G.out_edges(u, data=True) if w == v)
+
+    # The subject may be recorded under more than one image; an alias serving
+    # the same endpoint is the same subject, not a staging hop.
+    origins = [src] + [w for w in G.nodes if _same_service(G, src, w)]
+    if any(terminal(o, dst) for o in origins):
+        return True
+    # An edge into the subject has no incoming descendancy to stage through.
+    if (G.nodes.get(dst, {}).get("type") == "process"
+            and G.nodes.get(src, {}).get("type") != "process"):
+        return False
+
+    # Walk descendancy chains of at most k intermediate vertices, then require
+    # the terminal occurrence out of the vertex the chain reached.
+    frontier = [(o, {o}) for o in origins]
+    for _ in range(k):
+        nxt = []
+        for u, seen in frontier:
+            for _, w, d in G.out_edges(u, data=True):
+                if w in seen:
+                    continue              # simple path: no repeated vertex
+                if str(d.get("syscall", "")) not in _PROCESS_CREATION:
+                    continue              # a prefix edge must be a creation
+                if terminal(w, dst):
+                    return True
+                nxt.append((w, seen | {w}))
+        if not nxt:
+            return False
+        frontier = nxt
+    return False
+
+
 def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, k: int,
                           max_depth: int = 5, template_request: bool = False) -> bool:
     if src == dst:
         return True
+    if _STRICT_PATH:
+        return _strict_path(G, src, dst, syscall, k, template_request)
     # A template edge may span at most k intermediate vertices, and no search
     # runs deeper than the refinement depth bound d_max.
     max_len = min(k + 1, max_depth)
@@ -218,8 +307,7 @@ def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, 
         if depth >= max_len:
             continue
         for _, v, _, ed in G.out_edges(u, keys=True, data=True):
-            seen2 = seen or _sc_eq(str(ed.get("syscall", "")), syscall, G, u, v,
-                                   template_request=template_request)
+            seen2 = seen or _sc_eq(str(ed.get("syscall", "")), syscall, G, u, v, template_request)
             state = (v, depth + 1, seen2)
             if state in visited:
                 continue
