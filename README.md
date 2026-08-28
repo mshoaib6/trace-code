@@ -32,8 +32,8 @@ python3 eval_family.py --family_dir sig_out \
 
 ## Correspondence with the paper
 
-`45/45` is the CVE-associated grade of `design.tex`: a CVE alerts when some member of its compiled template family enumerates a candidate surviving the screen with a refinement meeting the alert predicate, scored per member and never pooled. `eval.tex` reports TRACE alerting on every CVE the ecosystem detects and covering the 8 with no published rule. All 45 alert here, compiled from PoC source.
+`45/45` is the wider CVE-associated grade of `eval.tex`: a CVE counts when some member of its compiled template family satisfies the alert predicate, scored per member and never pooled. The paper reports the same grade over the same 45 CVEs. Its primary endpoint is the stricter qualifying-edge-matched grade, 31 of 45, which this code does not compute.
 
-`0 cross-product false alerts` is the cross-CVE firing check over all 1968 ordered pairs: no template alerts on the capture of a CVE belonging to a different product. The three cross-CVE firings that remain are between CVE pairs exploited through one endpoint, where both PoCs request it: CrushFTP CVE-2024-4040 and CVE-2025-31161 at `/WebInterface/function/`, Ivanti CVE-2023-35078 and CVE-2023-35082 at `/api/v2/authorized/users`.
+`0 cross-product false alerts` is a cross-CVE check over all 1968 ordered pairs of the 45 shipped captures: no template alerts on the capture of a CVE from a different product. It is not the benign-corpus measurement `eval.tex` reports, which uses a stream not included here. The three cross-CVE firings that remain are between CVE pairs exploited through one endpoint, where both PoCs request it: CrushFTP CVE-2024-4040 and CVE-2025-31161 at `/WebInterface/function/`, Ivanti CVE-2023-35078 and CVE-2023-35082 at `/api/v2/authorized/users`.
 
 Parameters follow `design.tex`: τ 0.43, class weights (0.20, 0.33, 0.47), k 3, h 3, and the alert predicate `MS ≥ τ` with the mass floor `Σ wᵢnᵢ ≥ w₃`.
