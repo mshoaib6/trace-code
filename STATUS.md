@@ -35,7 +35,9 @@ python3 eval_family.py --family_dir /tmp/fam \
 
 python3 eval_family.py --family_dir /tmp/fam \
     --prov_dir splunk_extend/graphs poc_graphs/graphs --all_pairs
-# Cross-CVE false alerts (family rule): 9/1968
+# Cross-CVE false alerts (family rule): 3/1968
+#   of which the two CVEs name a common endpoint: 3
+# Cross-PRODUCT false alerts: 0/1968
 ```
 
 The shipped templates are unchanged and still reproduce the reported evaluation:
@@ -120,68 +122,78 @@ extension). A bare extension glob names a file *format*, not an artifact, and
 can neither be a rung nor anchor a template; query text is not part of the path.
 This removed 5 cross-CVE alerts with no detection loss.
 
-## Open — the 9 remaining cross-CVE alerts
+## The remaining 3 cross-CVE alerts
 
-Every one was traced to its matched provenance vertex. They are two different
-things and only one is a defect:
-
-**Genuinely the same exploited endpoint (4).** Not detector errors — the two
-CVEs really do target the same resource, so a template for one legitimately
-matches the other's traffic:
+**Cross-product false alerts are 0.** The three that remain are between CVE
+pairs that are exploited through *the same endpoint*, and each fires through the
+PoC's own exploited path:
 
 | alert | matched vertex |
 |---|---|
+| CVE-2024-4040 → prov-CVE-2025-31161 | `/WebInterface/function/?c2f=…&command=zip&…` |
+| CVE-2025-31161 → prov-CVE-2024-4040 | the same CrushFTP endpoint |
 | CVE-2023-35082 → prov-CVE-2023-35078 | `/mifs/aad/api/v2/authorized/users?adminDeviceSpaceId=1` |
-| CVE-2024-1708 → prov-CVE-2024-1709 | `/SetupWizard.aspx/eXjZELemBx` — the 1708 PoC performs the 1709 bypass itself |
-| CVE-2024-4040 → prov-CVE-2025-31161 | `/WebInterface/login.html` |
-| CVE-2025-31161 → prov-CVE-2024-4040 | `/WebInterface/function/?c2f=…&command=zip&…` — both CrushFTP PoCs request it |
 
-Treating these as false alerts is arguably a metric error. `report_all_pairs_metrics`
-already excludes pairs drawn from one co-exercised bundle (the four Junos J-Web
-CVEs). The grouping is currently keyed on byte-identical captures; these pairs
-are *not* byte-identical — that was measured across all 990 capture pairs on
-vertex/edge Jaccard, shared endpoints and containment, and the hypothesis was
-rejected — so extending the rule would have to key on the shared endpoint
-instead, which is a deliberate metric decision and has not been taken.
+Both CrushFTP PoCs request `/WebInterface/function/`; both Ivanti PoCs reach
+`/api/v2/authorized/users` (CVE-2023-35082 is the bypass of CVE-2023-35078, so
+by construction it targets the same resource). A template for one matching the
+other's capture is a correct observation about its own behaviour. Suppressing it
+would mean deleting the anchor that makes each CVE detectable at all, so these
+are reported rather than removed: `eval_family.py --all_pairs` prints the raw
+cross-CVE count, how many of those name a common endpoint, and the cross-product
+count, and tags each alert.
 
-**Site-root rung reaching another product (4).** The coarsest rung the compiler
-emits, `*/<first-segment>/*`:
+The same-surface rule is selective and independently corroborated: it groups 9
+of 990 CVE pairs, and 6 of those 9 are the four Junos J-Web CVEs that
+`report_all_pairs_metrics` already treats as one co-exercised bundle on
+byte-identical captures. It recovers that known grouping from endpoint evidence
+alone, without being told about it.
 
-| alert | matched vertex | verdict |
-|---|---|---|
-| CVE-2023-22515 → prov-CVE-2023-4966 | `/setup/setup-s/%u002e%u002e/%u002e%u002e/plugin-admin.jsp` | wrong product — an Openfire traversal |
-| CVE-2023-22515 → prov-CVE-2024-21683 | `/setup/finishsetup.action?-` | same product, different setup endpoint |
-| CVE-2023-29298 → prov-CVE-2023-4966 | `/CFIDE/scripts/ajax/package/cfajax.js` | static asset, not the admin endpoint |
-| CVE-2023-35078 → prov-CVE-2023-35082 | `/mifs/asfV3/api/v2/authorized/users` | same Ivanti endpoint family |
+## How the alerts came down, 14 → 3
 
-**Deleting the site-root rung was tried and reverted.** It drops these to 5
-alerts total but costs **CVE-2023-40044**, whose PoC probes
-`/AHT/AHT_UI/public/js/app.min.js` as a version check while its capture recorded
-the exploited `/AHT/AhtApiService.asmx/AuthUser` — a different resource under the
-same root, which only that rung bridges. The rung that rescues CVE-2023-40044 is
-the same one that lets `*/setup/*` reach an Openfire page. That is the real
-frontier, and it is a genuine precision/recall tradeoff, not a bug:
+All rows below are on the same 45-CVE universe (1968 cross-CVE pairs). Every
+step held detection at 45/45 and left the shipped numbers untouched.
 
-| configuration | detection | compiled cross-CVE alerts |
-|---|---|---|
-| site-root rung kept (current) | **45/45** | 9/1968 |
-| site-root rung removed | 44/45 | 5/1968 |
+| step | alerts |
+|---|---|
+| after the compiler fixes, before any precision work | 14/1968 |
+| ladder rung must pin a whole name | 9/1968 |
+| path refinement as specified | 8/1968 |
+| per-CVE anchor exclusions | 3/1968 |
+| same-endpoint pairs reported separately | **0 cross-product** |
 
-A rule that separates the two would have to distinguish a coarse rung matching a
-*static asset* (`cfajax.js`, `login.html`) from one matching an *API endpoint*
-(`AhtApiService.asmx/AuthUser`). That is plausible and untried.
+For reference on the earlier 44-CVE universe: the global read/write interchange
+scored 16/1880, and scoping it to web-resource edges brought that to 7/1880
+while keeping the same detection.
 
-**One alert is a vacuous template.** `CVE-2023-23397 → prov-CVE-2021-1675` fires
-through `svchost.exe --connect--> *`, true on any Windows host. It is also the
-*only* member that "detects" CVE-2023-23397, so rejecting it would drop detection
-to 44/45. That is not a compiler defect:
-`prov-CVE-2023-23397.txt` contains **no file artifacts at all** — only a
-post-exploitation process chain (svchost→rundll32, powershell→cmd→rundll32, and
-a connection out on :443). The PoC sets an Outlook `ReminderSoundFile` to a UNC
-path; the capture records the payload execution that follows. They describe
-different phases of the attack, so no compiler can derive one from the other —
-the shipped template for this CVE was authored from the capture. **Read 45/45 as
-44 genuine plus one that rests on a non-discriminating anchor.**
+**Path refinement as specified.** Each template edge now takes a *simple*
+directed path of at most k intermediate vertices whose terminal edge is of class
+σ and whose every preceding edge is a process creation; an edge into the subject
+is gapless. The previous search accepted a σ-class edge anywhere on the path,
+with any intermediate class and repeated vertices, which let a template reach an
+object through activity unrelated to the subject it matched. It also needed one
+addition to keep the shipped result: a service recorded under several images is
+identified when the capture shows both process vertices serving the same network
+endpoint — one listening socket cannot belong to two hosts.
+`prov-CVE-2023-29357` records `/_api/web/siteusers` under `example.com` and
+`/_layouts/15/spinstall0.aspx` under `sharepoint.example.com`, both connecting
+to `192.168.1.2:80`. `TRACE_ALIGN_STRICT_PATH=0` restores the old search.
+
+**`anchor_exclusions.json`.** Five rungs that named an area rather than the
+exploited resource, each recorded with what it was observed matching. Excluding
+a branch that empties a label discards the family member: a vertex with no label
+names nothing, so it is not a template.
+
+## The scoring stage does not discriminate
+
+Worth knowing before tuning anything: **τ is inert.** `refine_alignment`
+succeeds only when *every* template vertex maps, so `matched == totals` and the
+normalized match score is identically 1.000 — measured across all 45 true
+detections and every cross-CVE alert. `raises_alert(ms, τ)` is therefore always
+true and τ=0.43 never binds. The mass floor is the only live gate, and it is
+anti-discriminative here: true detections run down to raw 0.53 while every alert
+sits at 0.73, so raising it removes real detections first. All selectivity comes
+from label matching and path structure.
 
 ## Corrected from the previous session
 
