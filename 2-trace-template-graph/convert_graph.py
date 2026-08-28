@@ -171,6 +171,36 @@ def _query_body_anchor(kwargs):
     return "*" + "*".join(toks) + "*"
 
 
+def _path_valued_param(kwargs):
+    r"""A resource path carried by a request *parameter* rather than the URL.
+
+    Some requests name the resource they act on in a parameter whose value is
+    itself a path (ColdFusion's admin login posts
+    ``requestedURL=/CFIDE/administrator/index.cfm``). The target then serves and
+    records that resource, so when the request line itself fixes no path this
+    parameter names the anchor. Only a value that is literally a URL path is
+    used -- never an arbitrary payload -- so this cannot invent an endpoint.
+    Returns ``*<path>*`` or None.
+    """
+    import ast as _ast, re as _re
+    for key in ("params", "data", "json"):
+        raw = kwargs.get(key)
+        if not raw:
+            continue
+        try:
+            node = _ast.parse(str(raw), mode="eval").body
+        except Exception:
+            continue
+        if not isinstance(node, _ast.Dict):
+            continue
+        for v in node.values:
+            if isinstance(v, _ast.Constant) and isinstance(v.value, str):
+                val = v.value.strip()
+                if _re.fullmatch(r"/[A-Za-z0-9_.\-]+(?:/[A-Za-z0-9_.\-]*)*\??", val) and len(val) > 6:
+                    return "*" + val.rstrip("?") + "*"
+    return None
+
+
 def _merge_query(path, query):
     """Append a query/body anchor fragment to a resource/endpoint label."""
     if query is None:
@@ -608,6 +638,10 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 else:
                     verb = rec.get("class", "write")
                 base = _http_resource_label(url) if url is not None else None
+                if base is None or not _contentful(base):
+                    # The request line fixes no path; a path-valued parameter
+                    # names the resource the target will serve.
+                    base = _path_valued_param(kwargs) or base
                 # A collector logs the whole request line, so query/body params
                 # (params=, data=, json=) are part of the resource the target
                 # records -- often where the discriminating anchor lives.
@@ -626,6 +660,21 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     alts = [path]
                     if query is not None and base is not None and base != path:
                         alts.append(base)
+                    # The directory the resource sits in: a collector may have
+                    # recorded a sibling resource of the same vulnerable surface
+                    # (/CFIDE/administrator/index.cfm vs .../enter.cfm). Bounded
+                    # to the immediate parent, and only when that parent is itself
+                    # distinctive, so it never widens to a site root.
+                    import re as _re2
+                    core = (base or path).strip("*").split("*", 1)[0].split("?", 1)[0]
+                    segs = [x for x in core.split("/") if x]
+                    if len(segs) >= 2:
+                        parent = "/".join(segs[:-1])
+                        plast = segs[-2].lower()
+                        if len(parent) >= 8 and plast not in _GENERIC_SEG:
+                            palt = "*/" + parent + "/*"
+                            if palt not in alts:
+                                alts.append(palt)
                     path_label = " | ".join(alts)
                 client_id, host_id = "net_client", "proc_host"
                 if client_id not in output_graph:

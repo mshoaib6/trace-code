@@ -450,7 +450,10 @@ class _ExtractLiteralPath(ast.NodeTransformer):
             return ast.Constant(value=self.fallback_url)
         return arg
 
-    _HTTP_CALL_ATTRS = {"get", "post", "put", "delete", "head", "patch"}
+    _HTTP_CALL_ATTRS = {"get", "post", "put", "delete", "head", "patch",
+                        # helper wrappers many tools expose (utility.requests_get)
+                        "requests_get", "requests_post", "requests_put",
+                        "requests_delete", "requests_head", "requests_patch"}
 
     def _is_http_call(self, call: ast.Call) -> bool:
         """True iff this is a recognised HTTP-verb call on any object.
@@ -550,7 +553,9 @@ class _NormalizeHttpWrappers(ast.NodeTransformer):
         # requests.<verb>(...) when the receiver looks like a session or the call
         # carries an HTTP-specific keyword (verify=/files=/data=/...).
         func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in self._VERBS:
+        if isinstance(func, ast.Attribute) and func.attr.replace("requests_", "") in self._VERBS:
+            func = ast.Attribute(value=func.value, attr=func.attr.replace("requests_", ""), ctx=func.ctx)
+            node = ast.Call(func=func, args=node.args, keywords=node.keywords)
             kwnames = {kw.arg for kw in node.keywords if kw.arg}
             if self._is_session_recv(func.value) or (kwnames & self._HTTP_KWARGS):
                 new_func = ast.Attribute(value=ast.Name(id="requests", ctx=ast.Load()),

@@ -81,6 +81,17 @@ def _slash_norm(s: str) -> str:
     return s.replace("\\", "/")
 
 
+def _windowsish(s: str) -> bool:
+    r"""True for a label that names a Windows object, whose filesystem and
+    process names are case-insensitive (``UNIDRV.DLL`` and ``unidrv.dll`` are the
+    same driver). Recognised by a backslash, a drive letter, or a Windows
+    executable/library/script extension."""
+    low = s.lower()
+    return ("\\" in s or re.match(r"^[a-zA-Z]:", s) is not None
+            or low.endswith((".dll", ".exe", ".bat", ".cmd", ".ps1", ".sys", ".scr", ".msi"))
+            or ".dll" in low or ".exe" in low)
+
+
 def label_matches(sig_label: str, prov_label: str) -> bool:
     s = (sig_label or "").strip()
     p = (prov_label or "").strip()
@@ -95,5 +106,15 @@ def label_matches(sig_label: str, prov_label: str) -> bool:
         return True
     if "*" in s:
         rx = _wildcard_to_regex(s)
-        return bool(rx.match(p)) or bool(_wildcard_to_regex(_slash_norm(s)).match(_slash_norm(p)))
-    return s == p or _slash_norm(s) == _slash_norm(p)
+        if rx.match(p) or _wildcard_to_regex(_slash_norm(s)).match(_slash_norm(p)):
+            return True
+        # Windows names are case-insensitive, so a driver recorded as
+        # unidrv.dll and a template naming UNIDRV.DLL denote the same object.
+        if _windowsish(s) or _windowsish(p):
+            return bool(_wildcard_to_regex(_slash_norm(s).lower()).match(_slash_norm(p).lower()))
+        return False
+    if s == p or _slash_norm(s) == _slash_norm(p):
+        return True
+    if _windowsish(s) or _windowsish(p):
+        return _slash_norm(s).lower() == _slash_norm(p).lower()
+    return False
