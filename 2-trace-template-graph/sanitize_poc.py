@@ -112,16 +112,6 @@ def _extract_documented_url_path(source: str) -> str | None:
                                            ".msi", ".deb", ".rpm", ".jar", ".whl",
                                            ".pdf", ".png", ".jpg", ".gif", ".svg")):
             continue
-        # Only a path that reads like an exploit endpoint is a usable anchor: a
-        # query string, an /api|/rest|/cgi segment, or a server-script extension.
-        endpointish = ("?" in path or "=" in path
-                       or any(s in clean for s in ("/api/", "/rest/", "/cgi", "/servlet",
-                                                   "/developmentserver", "/webui", "/mifs"))
-                       or any(clean.endswith(e) for e in
-                              (".php", ".jsp", ".jspx", ".asp", ".aspx", ".cfm", ".action",
-                               ".cgi", ".fcgi", ".do", ".asmx", ".ashx", ".pl", ".py", ".html")))
-        if not endpointish:
-            continue
         generic_host = any(tok in host_lower for tok in ("example.com", "target.example"))
         # Score: more path segments and longer path = more specific.
         depth = path.count("/")
@@ -437,6 +427,12 @@ class _ExtractLiteralPath(ast.NodeTransformer):
         If no literal is recoverable but a documented URL path was parsed from
         the PoC's comments, fall back to that path."""
         literal = self._extract_literal(arg)
+        # A bare web-resource filename (urljoin(base, 'shell.jsp')) denotes the
+        # path /shell.jsp that the target records; treat it as a path anchor.
+        if literal and "/" not in literal:
+            import re as _re
+            if _re.fullmatch(r"[A-Za-z0-9._-]{3,}\.(jsp|jspx|php|aspx|asp|ashx|cfm|do|action|cgi|html?)", literal):
+                literal = "/" + literal
         if literal and "/" in literal:
             import re as _re
             m = _re.search(r"(/[^/].*)$", literal.split("://", 1)[-1])
