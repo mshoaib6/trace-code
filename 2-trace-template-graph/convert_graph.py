@@ -87,6 +87,51 @@ def _http_endpoint_label(raw):
     return _http_resource_label(raw)
 
 
+def _query_body_anchor(kwargs):
+    r"""Concrete query/body parameters a request carries, as ``name=value``
+    tokens joined by wildcards.
+
+    The exploit's discriminating value often rides in ``params=``, ``data=`` or
+    ``json=`` rather than the path (``requests.get(u, params={'rest_route':
+    '/pmpro/v1/order', 'code': payload})``). A collector logs the whole request
+    line, so these belong in the resource label. Each concrete string value is
+    kept; a non-literal value (a payload variable) becomes ``name=*``. Returns a
+    ``*a=x*b=y*`` fragment, or None if nothing concrete is present.
+    """
+    import ast as _ast
+    toks = []
+    for key in ("params", "data", "json"):
+        raw = kwargs.get(key)
+        if not raw:
+            continue
+        try:
+            node = _ast.parse(str(raw), mode="eval").body
+        except Exception:
+            continue
+        if not isinstance(node, _ast.Dict):
+            continue
+        for k, v in zip(node.keys, node.values):
+            if not (isinstance(k, _ast.Constant) and isinstance(k.value, str)):
+                continue
+            name = k.value
+            if isinstance(v, _ast.Constant) and isinstance(v.value, str):
+                toks.append(f"{name}={v.value}")
+            else:
+                toks.append(f"{name}=")
+    if not toks:
+        return None
+    return "*" + "*".join(toks) + "*"
+
+
+def _merge_query(path, query):
+    """Append a query/body anchor fragment to a resource/endpoint label."""
+    if query is None:
+        return path
+    if path is None:
+        return query
+    return path.rstrip("*") + "*" + query.lstrip("*")
+
+
 def _is_rooted_path(s):
     """True when the literal fixes the whole path, so no prefix is missing."""
     import re as _re
@@ -269,6 +314,49 @@ def _fresh_wildcard():
     return w
 
 
+def _inline_self_attrs(tree):
+    r"""Substitute string-valued instance attributes before extraction.
+
+    Class-based PoCs set the target in ``__init__`` (``self.base_url =
+    'http://' + host``) and build requests from it (``self.base_url + path``).
+    Value propagation over local names misses these, so the request path is
+    lost. We collect every ``self.<attr>`` assigned a single string-valued
+    expression and replace each later ``self.<attr>`` read with that
+    expression, so the existing propagation and folding recover the path.
+    """
+    assigns, counts = {}, {}
+
+    def stringy(n):
+        return (isinstance(n, ast.Constant) and isinstance(n.value, str)) \
+            or isinstance(n, ast.JoinedStr) \
+            or (isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Mod))
+                and (stringy(n.left) or stringy(n.right)))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            t = node.targets[0]
+            if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) \
+                    and t.value.id == "self":
+                counts[t.attr] = counts.get(t.attr, 0) + 1
+                if stringy(node.value):
+                    assigns.setdefault(t.attr, node.value)
+    keep = {a: v for a, v in assigns.items() if counts.get(a) == 1}
+    if not keep:
+        return tree
+
+    class _Sub(ast.NodeTransformer):
+        def visit_Attribute(self, node):
+            self.generic_visit(node)
+            if isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name) \
+                    and node.value.id == "self" and node.attr in keep:
+                return keep[node.attr]
+            return node
+
+    tree = _Sub().visit(tree)
+    ast.fix_missing_locations(tree)
+    return tree
+
+
 def handle_function(function_name, args, kwargs, output_graph, base_process_node):
     """Lower one call into template operations, driven by Pi's operation records.
 
@@ -287,6 +375,7 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
         # --- HTTP request ---
         if kind == "http":
             url = _resolve_operand(args, kwargs, rec, "http")
+            query = _query_body_anchor(kwargs)
             if locus == "remote":
                 # Target view (R*): the request the monitored host records, as a
                 # resource the vulnerable service reads or writes.
@@ -295,6 +384,10 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 else:
                     verb = rec.get("class", "write")
                 path = _http_resource_label(url) if url is not None else None
+                # A collector logs the whole request line, so query/body params
+                # (params=, data=, json=) are part of the resource the target
+                # records -- often where the discriminating anchor lives.
+                path = _merge_query(path, query)
                 if path is None:
                     path = _fresh_wildcard()
                 client_id, host_id = "net_client", "proc_host"
@@ -312,6 +405,7 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 # reading it. Represented as the sig's local shape: an outbound
                 # connection between the runner and the endpoint.
                 peer = _http_endpoint_label(url) if url is not None else None
+                peer = _merge_query(peer, query)
                 if peer is None:
                     peer = _fresh_wildcard()
                 output_graph.add_node(peer, node_info=Node(peer, "Socket", peer))
@@ -775,6 +869,7 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         base_process_node = Node(process_id, 'Process', process_id)
         if locus == "local":
             output_graph.add_node(process_id, node_info=base_process_node)
+        tree = _inline_self_attrs(tree)
         handle_tree(tree, filename, foldername, output_graph, process_id)
 
         # Skip graphs that carry no syscall edges (pure control-flow stubs).
