@@ -184,6 +184,25 @@ exploited resource, each recorded with what it was observed matching. Excluding
 a branch that empties a label discards the family member: a vertex with no label
 names nothing, so it is not a template.
 
+## mu_E injectivity conflicts with the read/write pair
+
+The one refinement clause still unimplemented is "distinct template edges take
+distinct terminal occurrences" -- mu_E everywhere injective. It was implemented
+and reverted: it drops detection from 45/45 to 39/45, losing CVE-2023-36844,
+-36845, -36846, -36847, CVE-2024-1709 and CVE-2025-31161.
+
+The cause is a modelling mismatch, not a matcher bug. Stage 2 emits *two* edges
+for a single HTTP request against a resource, one `read` and one `write`, because
+it cannot know which direction the collector recorded. Those two template edges
+denote one operation, but injectivity demands two distinct observed occurrences
+and the capture holds one. Exactly the CVEs whose templates carry a read/write
+pair on one vertex are the ones that fail.
+
+The clause would be correct if the compiler emitted a single edge of an
+ambiguous class instead; the scoped read/write normalization in `_sc_eq` already
+resolves that ambiguity at match time. Emitting one edge rather than two is the
+change that would let the clause hold, and it has not been made.
+
 ## The scoring stage does not discriminate
 
 Worth knowing before tuning anything: **τ is inert.** `refine_alignment`
