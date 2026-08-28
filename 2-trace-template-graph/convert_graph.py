@@ -563,6 +563,13 @@ def _inline_functions(tree, max_depth=3):
     """
     funcs = {n.name: n for n in ast.walk(tree)
              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    classes = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+
+    def _method(cls, name):
+        for m in cls.body:
+            if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == name:
+                return m
+        return None
 
     def binds_for(fn, call):
         out = []
@@ -586,6 +593,8 @@ def _inline_functions(tree, max_depth=3):
         name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
         return funcs.get(name) if name in funcs else None
 
+    inst_cls = {}
+
     def inline_stmts(stmts, depth):
         out = []
         for st in stmts:
@@ -594,6 +603,35 @@ def _inline_functions(tree, max_depth=3):
                 call = st.value
             elif isinstance(st, ast.Assign) and isinstance(st.value, ast.Call):
                 call = st.value
+            # ``obj = Cls(args)`` -- a class-based PoC fixes its operands in the
+            # constructor (``PoC('calc.exe', 'test2.doc')``) and acts on them in a
+            # method. Inline __init__ with its arguments bound, and remember the
+            # variable's class so ``obj.method()`` can be inlined too.
+            if (call is not None and isinstance(st, ast.Assign) and len(st.targets) == 1
+                    and isinstance(st.targets[0], ast.Name)):
+                cname = call.func.id if isinstance(call.func, ast.Name) else None
+                cls = classes.get(cname) if cname else None
+                init = _method(cls, "__init__") if cls is not None else None
+                if init is not None and depth < max_depth:
+                    import copy as _copy
+                    out.extend(binds_for(init, call))
+                    out.extend(inline_stmts([_copy.deepcopy(x) for x in init.body], depth + 1))
+                    inst_cls[st.targets[0].id] = cname
+                    continue
+            # ``obj.method(args)`` where obj was built from a known class.
+            if call is not None and isinstance(call.func, ast.Attribute) \
+                    and isinstance(call.func.value, ast.Name) \
+                    and call.func.value.id in inst_cls and depth < max_depth:
+                cls = classes.get(inst_cls[call.func.value.id])
+                m = _method(cls, call.func.attr) if cls is not None else None
+                if m is not None:
+                    import copy as _copy
+                    body = [_copy.deepcopy(x) for x in m.body]
+                    if isinstance(st, ast.Assign) and len(st.targets) == 1:
+                        body = _returns_to_assign(body, st.targets[0])
+                    out.extend(binds_for(m, call))
+                    out.extend(inline_stmts(body, depth + 1))
+                    continue
             fn = user_call(call) if call is not None else None
             if fn is not None and depth < max_depth and fn.name != getattr(fn, "_inlining", None):
                 import copy as _copy
@@ -636,20 +674,32 @@ def _inline_self_attrs(tree):
     assigns, counts = {}, {}
 
     def stringy(n):
+        # A bare name counts: ``self.docfile = docfile`` forwards a constructor
+        # parameter, and substituting the name lets ordinary value propagation
+        # resolve it to the literal the caller passed.
         return (isinstance(n, ast.Constant) and isinstance(n.value, str)) \
             or isinstance(n, ast.JoinedStr) \
+            or isinstance(n, ast.Name) \
             or (isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Mod))
                 and (stringy(n.left) or stringy(n.right)))
 
+    seen_vals = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
             t = node.targets[0]
             if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) \
                     and t.value.id == "self":
                 counts[t.attr] = counts.get(t.attr, 0) + 1
+                try:
+                    seen_vals.setdefault(t.attr, set()).add(ast.unparse(node.value))
+                except Exception:
+                    seen_vals.setdefault(t.attr, set()).add(repr(node.value))
                 if stringy(node.value):
                     assigns.setdefault(t.attr, node.value)
-    keep = {a: v for a, v in assigns.items() if counts.get(a) == 1}
+    # An attribute is substitutable when every assignment to it carries the same
+    # expression. Inlining a constructor duplicates its body, so counting raw
+    # assignments would reject an attribute the PoC in fact sets only one way.
+    keep = {a: v for a, v in assigns.items() if len(seen_vals.get(a, ())) == 1}
     if not keep:
         return tree
 
