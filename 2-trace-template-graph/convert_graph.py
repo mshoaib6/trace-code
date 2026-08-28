@@ -398,7 +398,24 @@ def _exe_name(raw):
     The command line is kept as the primary label, with the image name offered as
     a ``|`` alternative so either recorded form aligns.
     """
-    import re as _re
+    import re as _re, ast as _ast
+    # A spawn operand is often an argv LIST (subprocess.run(["rar","a",out])).
+    # The program is its first element; fold the list into a command string so
+    # the same labelling rules apply.
+    try:
+        _n = _ast.parse(str(raw), mode="eval").body
+        if isinstance(_n, (_ast.List, _ast.Tuple)):
+            parts = []
+            for el in _n.elts:
+                if isinstance(el, _ast.Constant) and isinstance(el.value, str):
+                    parts.append(el.value)
+                else:
+                    parts.append("*")
+            joined = " ".join(parts).strip()
+            if joined and joined.strip("* ") != "":
+                raw = repr(joined)
+    except Exception:
+        pass
     lbl = _clean_label(raw)
     if lbl is None or str(lbl).strip() in ("", "*") or str(lbl).startswith("*"):
         # A command line assembled from literals and variables ("curl ... " + host

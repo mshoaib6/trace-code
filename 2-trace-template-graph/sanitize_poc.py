@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy as _copy_mod
 import json
 import sys
 from pathlib import Path
@@ -812,6 +813,28 @@ def _collect_session_vars(tree: ast.Module) -> Set[str]:
     return out
 
 
+class _SubstituteArgparseDefaults(ast.NodeTransformer):
+    """Replace ``args.<dest>`` with the literal the PoC declares as that
+    option's default.
+
+    A PoC's argparse default is the value it uses when run as documented, so it
+    names a real operand (``--out`` default ``"malicious.rar"`` means the archive
+    written is malicious.rar). Only string defaults are substituted, and only for
+    the conventional namespace names, so nothing is invented."""
+
+    _NS = ("args", "options", "opts", "arguments", "config", "parsed")
+
+    def __init__(self, defaults):
+        self.defaults = defaults or {}
+
+    def visit_Attribute(self, node):
+        self.generic_visit(node)
+        if (isinstance(node.value, ast.Name) and node.value.id in self._NS
+                and node.attr in self.defaults):
+            return ast.copy_location(_copy_mod.deepcopy(self.defaults[node.attr]), node)
+        return node
+
+
 def sanitize(source: str, relevant_keys: Set[str]) -> str:
     tree = ast.parse(source)
     tree = _NormalizePathlib().visit(tree)
@@ -820,7 +843,9 @@ def sanitize(source: str, relevant_keys: Set[str]) -> str:
     extractor = _ExtractLiteralPath()
     extractor.fallback_url = fallback
     extractor.var_map = _collect_var_map(tree)
-    extractor.argparse_defaults = _collect_argparse_defaults(tree)
+    _apd = _collect_argparse_defaults(tree)
+    extractor.argparse_defaults = _apd
+    tree = _SubstituteArgparseDefaults(_apd).visit(tree)
     tree = extractor.visit(tree)
     # After extraction we may have N different extracted paths (one per
     # helper/phase). Stage 3 refinement is strictly injective, so if the
