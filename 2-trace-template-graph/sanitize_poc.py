@@ -717,17 +717,34 @@ def _lower_py310_syntax(source: str) -> str:
     return source
 
 
+def _py2_to_py3(source: str) -> str:
+    """Best-effort Python-2 -> Python-3 conversion so an old PoC's syscall-level
+    calls survive to stage 2. Uses lib2to3; returns the source unchanged if the
+    conversion library is unavailable or errors."""
+    try:
+        from lib2to3 import refactor
+        fixers = refactor.get_fixers_from_package("lib2to3.fixes")
+        rt = refactor.RefactoringTool(fixers)
+        return str(rt.refactor_string(source + "\n", "poc"))
+    except Exception:
+        return source
+
+
 def _sanitize_file(src: Path, dst: Path | None, keys: Set[str]) -> str:
     source = src.read_text(encoding="utf-8", errors="replace")
     try:
         out = sanitize(source, keys)
     except SyntaxError:
-        # Try the Python-3.10 match/case lowering pass, then retry.
+        # Retry through the Python-3.10 match/case lowering, then a Python-2->3
+        # conversion pass (many older exploit PoCs are Python 2).
         try:
             out = sanitize(_lower_py310_syntax(source), keys)
-        except SyntaxError as e2:
-            print(f"    WARN  {src.name}: skipped (parse error: {e2.msg})", file=sys.stderr)
-            out = ""
+        except SyntaxError:
+            try:
+                out = sanitize(_lower_py310_syntax(_py2_to_py3(source)), keys)
+            except SyntaxError as e3:
+                print(f"    WARN  {src.name}: skipped (parse error: {e3.msg})", file=sys.stderr)
+                out = ""
     if dst is not None:
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(out, encoding="utf-8")
