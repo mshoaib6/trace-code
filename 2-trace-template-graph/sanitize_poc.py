@@ -468,7 +468,7 @@ class _ExtractLiteralPath(ast.NodeTransformer):
         last = name.rsplit(".", 1)[-1]
         return last in self._HTTP_CALL_ATTRS
 
-    _URL_KWARGS = ("url", "uri", "endpoint")
+    _URL_KWARGS = ("url", "uri", "endpoint", "path")
     _QUERY_KWARGS = ("params", "data", "json")
 
     def _inline_query_kws(self, keywords):
@@ -565,7 +565,22 @@ class _NormalizeHttpWrappers(ast.NodeTransformer):
         if not is_wrapper:
             return node
         if len(node.args) < 2:
-            return node
+            # Framework wrappers often pass everything by keyword:
+            # self.http_request(method="GET", path="/apps/zxtm/login.cgi").
+            kw = {k.arg: k.value for k in node.keywords if k.arg}
+            loc = next((kw[n] for n in ("path", "url", "uri", "endpoint") if n in kw), None)
+            if loc is None:
+                return node
+            m = kw.get("method")
+            verb = "post"
+            if isinstance(m, ast.Constant) and isinstance(m.value, str) and m.value.upper() in self._METHODS:
+                verb = m.value.lower()
+            rest = [k for k in node.keywords
+                    if k.arg not in ("method", "path", "url", "uri", "endpoint")]
+            return ast.Call(
+                func=ast.Attribute(value=ast.Name(id="requests", ctx=ast.Load()),
+                                   attr=verb, ctx=ast.Load()),
+                args=[loc], keywords=rest)
         method_arg = node.args[0]
         method = None
         if isinstance(method_arg, ast.Constant) and isinstance(method_arg.value, str):

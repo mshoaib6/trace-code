@@ -501,6 +501,38 @@ def _fresh_wildcard():
     return w
 
 
+def _returns_to_assign(body, target):
+    """Rewrite ``return <expr>`` into ``<target> = <expr>`` in an inlined body.
+
+    Used when a helper's result is what the caller acts on. Nested function and
+    lambda bodies are left alone -- their returns belong to those functions.
+    """
+    import copy as _copy
+
+    class _R(ast.NodeTransformer):
+        def visit_FunctionDef(self, node):
+            return node
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_Lambda(self, node):
+            return node
+
+        def visit_Return(self, node):
+            if node.value is None:
+                return node
+            return ast.copy_location(
+                ast.Assign(targets=[_copy.deepcopy(target)], value=node.value), node)
+
+    out = []
+    for st in body:
+        try:
+            out.append(_R().visit(st))
+        except Exception:
+            out.append(st)
+    return out
+
+
 def _inline_functions(tree, max_depth=3):
     r"""Inline user-defined function calls, binding arguments to parameters.
 
@@ -549,6 +581,12 @@ def _inline_functions(tree, max_depth=3):
             if fn is not None and depth < max_depth and fn.name != getattr(fn, "_inlining", None):
                 import copy as _copy
                 body = [_copy.deepcopy(s) for s in fn.body]
+                # ``x = helper(...)``: the operand the PoC fixes is the helper's
+                # RETURN value, so rewrite each of the helper's returns into an
+                # assignment to x. Value propagation then resolves x, and the
+                # control-flow split explores each return branch in turn.
+                if isinstance(st, ast.Assign) and len(st.targets) == 1:
+                    body = _returns_to_assign(body, st.targets[0])
                 out.extend(binds_for(fn, call))
                 out.extend(inline_stmts(body, depth + 1))
             elif isinstance(st, (ast.If, ast.For, ast.While, ast.With, ast.Try)):
