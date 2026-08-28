@@ -1094,7 +1094,18 @@ def _split_remote_anchors(output_graph):
     resources = [v for _, v in output_graph.out_edges(host_id) if v != host_id]
     resources = list(dict.fromkeys(resources))
     if len(resources) <= 1:
-        return [output_graph]
+        graphs = [output_graph]
+        # Same client-less variant for a single-request template.
+        for res in resources:
+            P = nx.MultiDiGraph()
+            for nid in (host_id, res):
+                P.add_node(nid, **output_graph.nodes[nid])
+            for u, v, data in output_graph.edges(data=True):
+                if u in P and v in P:
+                    P.add_edge(u, v, **data)
+            if P.number_of_edges():
+                graphs.append(P)
+        return graphs
     graphs = []
     for res in resources:
         H = nx.MultiDiGraph()
@@ -1104,6 +1115,18 @@ def _split_remote_anchors(output_graph):
             if u in H and v in H:
                 H.add_edge(u, v, **data)
         graphs.append(H)
+        # The requesting client is structural, not evidentiary: a collector may
+        # record only the server-side effect (the service touching the resource)
+        # without a matching network vertex. Also emit the host->resource pair
+        # alone so such a trace still contains the template.
+        P = nx.MultiDiGraph()
+        for nid in (host_id, res):
+            P.add_node(nid, **output_graph.nodes[nid])
+        for u, v, data in output_graph.edges(data=True):
+            if u in P and v in P:
+                P.add_edge(u, v, **data)
+        if P.number_of_edges():
+            graphs.append(P)
     return graphs
 
 

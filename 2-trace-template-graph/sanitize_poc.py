@@ -378,6 +378,15 @@ class _ExtractLiteralPath(ast.NodeTransformer):
                 return combined or None
             if isinstance(node.op, ast.Mod):
                 return self._extract_literal(node.left, _depth + 1)
+        if isinstance(node, ast.IfExp):
+            # ``args.out if args.out else "default.rar"`` -- a PoC's default
+            # output name lives in one branch of a conditional; take whichever
+            # branch yields a literal.
+            for branch in (node.body, node.orelse):
+                lit = self._extract_literal(branch, _depth + 1)
+                if lit:
+                    return lit
+            return None
         if isinstance(node, ast.Call):
             fn = _dotted_name(node.func)
             leaf = fn.rsplit(".", 1)[-1] if fn else None
