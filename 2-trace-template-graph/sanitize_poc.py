@@ -450,25 +450,42 @@ class _NormalizeHttpWrappers(ast.NodeTransformer):
     _WRAPPER_SUFFIXES = (".request", ".send_request", ".do_request", ".make_request",
                          ".http_request", ".send")
 
+    # Keyword arguments specific to requests/httpx verb calls; their presence
+    # marks a .get/.post(...) as an HTTP call rather than e.g. dict.get.
+    _HTTP_KWARGS = {"verify", "headers", "data", "json", "files", "params",
+                    "cookies", "auth", "allow_redirects", "timeout", "proxies",
+                    "stream", "url"}
+    # Receiver attribute/name fragments that denote an HTTP session object.
+    _SESSION_HINTS = ("session", "client", "http", "sess")
+
     def __init__(self, session_vars=None):
         self.session_vars = session_vars or set()
+
+    def _is_session_recv(self, recv) -> bool:
+        if isinstance(recv, ast.Name):
+            return recv.id in self.session_vars or recv.id.lower() in self._SESSION_HINTS
+        if isinstance(recv, ast.Attribute):
+            return recv.attr.lower() in self._SESSION_HINTS
+        return False
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         name = _dotted_name(node.func)
         if name is None:
             return node
-        # A call on a requests/httpx session object -- session.get(url, ...) --
-        # is an HTTP verb call, but stage 2 keys on requests.<verb>; the receiver
-        # is often a parameter it cannot trace back to requests.Session(). Rewrite
-        # <session-var>.<verb>(...) to requests.<verb>(...) so it is recognised.
+        # A call on a requests/httpx session object -- session.get(url, ...) or
+        # self.client.post(...) -- is an HTTP verb call, but stage 2 keys on
+        # requests.<verb>; the receiver is often a parameter/attribute it cannot
+        # trace back to requests.Session(). Rewrite <session>.<verb>(...) to
+        # requests.<verb>(...) when the receiver looks like a session or the call
+        # carries an HTTP-specific keyword (verify=/files=/data=/...).
         func = node.func
-        if (isinstance(func, ast.Attribute) and func.attr in self._VERBS
-                and isinstance(func.value, ast.Name)
-                and func.value.id in self.session_vars):
-            new_func = ast.Attribute(value=ast.Name(id="requests", ctx=ast.Load()),
-                                     attr=func.attr, ctx=ast.Load())
-            return ast.Call(func=new_func, args=node.args, keywords=node.keywords)
+        if isinstance(func, ast.Attribute) and func.attr in self._VERBS:
+            kwnames = {kw.arg for kw in node.keywords if kw.arg}
+            if self._is_session_recv(func.value) or (kwnames & self._HTTP_KWARGS):
+                new_func = ast.Attribute(value=ast.Name(id="requests", ctx=ast.Load()),
+                                         attr=func.attr, ctx=ast.Load())
+                return ast.Call(func=new_func, args=node.args, keywords=node.keywords)
         is_wrapper = any(name.endswith(s) for s in self._WRAPPER_SUFFIXES)
         if not is_wrapper:
             return node
