@@ -104,6 +104,45 @@ def build_family(poc: Path, san_dir: Path):
     return [m for m in members if m["edges"] > 0]
 
 
+EXCLUSIONS = HERE / "anchor_exclusions.json"
+
+
+def _load_exclusions():
+    """Per-CVE anchors excluded from the emitted family. See the file's _comment."""
+    if not EXCLUSIONS.exists():
+        return {}
+    raw = json.loads(EXCLUSIONS.read_text(encoding="utf-8"))
+    return {k: set(v.get("exclude", ())) for k, v in raw.items()
+            if not k.startswith("_") and isinstance(v, dict)}
+
+
+def apply_exclusions(cve, text, excluded):
+    """Drop excluded label branches.
+
+    Returns (text, dropped). Text is None when exclusion leaves some vertex with
+    no label at all: that vertex then names nothing, so the member is not a
+    template and is discarded rather than kept on the branch just excluded.
+    """
+    if not excluded:
+        return text, 0
+    out, dropped = [], 0
+    for line in text.splitlines():
+        f = line.split(None, 3)
+        if not f or f[0] != "NODE" or len(f) < 4:
+            out.append(line)
+            continue
+        brs = [b.strip() for b in f[3].split("|") if b.strip()]
+        keep = [b for b in brs if b not in excluded]
+        if len(keep) == len(brs):
+            out.append(line)
+            continue
+        dropped += len(brs) - len(keep)
+        if not keep:
+            return None, dropped
+        out.append(f"{f[0]} {f[1]} {f[2]} " + " | ".join(keep))
+    return "\n".join(out) + ("\n" if out else ""), dropped
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -119,15 +158,26 @@ def main() -> int:
     san_dir = HERE / "_sanitized_family"
     san_dir.mkdir(exist_ok=True)
 
+    exclusions = _load_exclusions()
+    excluded_total = 0
     manifest = {}
     rows = []
     for poc in sorted(poc_dir.glob("CVE-*.py")):
         cve = poc.stem
         family = build_family(poc, san_dir)
+        drop = exclusions.get(cve, set())
         entries = []
-        for i, m in enumerate(family):
+        kept = []
+        for m in family:
+            text, n = apply_exclusions(cve, m["text"], drop)
+            excluded_total += n
+            if text is None:
+                continue                  # no anchor survives: not a template
+            kept.append((m, text))
+        family = [m for m, _ in kept]
+        for i, (m, text) in enumerate(kept):
             fname = f"sig-{cve}--{i:02d}.txt"
-            (out_dir / fname).write_text(m["text"], encoding="utf-8")
+            (out_dir / fname).write_text(text, encoding="utf-8")
             entries.append({k: v for k, v in m.items() if k != "text"} | {"file": fname})
         manifest[cve] = entries
         rows.append((cve, len(family),
@@ -143,6 +193,9 @@ def main() -> int:
     have = sum(1 for _, n, _, _ in rows if n > 0)
     total = sum(n for _, n, _, _ in rows)
     print(f"\n{have}/{len(rows)} CVEs yield >=1 template; {total} family members total")
+    if excluded_total:
+        print(f"anchor_exclusions.json: dropped {excluded_total} label branch(es) "
+              f"across {len(exclusions)} CVE(s)")
     return 0
 
 

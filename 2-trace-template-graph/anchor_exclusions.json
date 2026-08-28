@@ -1,0 +1,49 @@
+{
+  "_comment": [
+    "Anchors excluded from a CVE's compiled template family.",
+    "",
+    "Stage 2 offers each resource label as a ladder of rungs, the widest fixing a",
+    "single path component -- the area a product serves. That rung earns its place",
+    "when a capture recorded a different resource of the same vulnerable surface",
+    "than the PoC named (CVE-2023-40044 aligns only through its */AHT/* rung). But",
+    "where the component is an ordinary word, or names a surface the product serves",
+    "for unrelated purposes, the rung stops identifying the exploited resource and",
+    "matches whatever else is filed beneath it.",
+    "",
+    "Each entry below records one such rung together with what it was observed",
+    "matching. Excluding it never removes the CVE's own detection: the narrower",
+    "rungs, and the other members of the family, carry that.",
+    "",
+    "A branch is only ever dropped when the label keeps at least one other."
+  ],
+  "CVE-2023-22515": {
+    "exclude": [
+      "*/setup/*"
+    ],
+    "why": "an installer area every web application has; matched an Openfire admin-console traversal (/setup/setup-s/%u002e%u002e/%u002e%u002e/plugin-admin.jsp) and an unrelated Confluence setup endpoint"
+  },
+  "CVE-2023-29298": {
+    "exclude": [
+      "*/CFIDE/*"
+    ],
+    "why": "the whole ColdFusion runtime directory; matched a static script asset (/CFIDE/scripts/ajax/package/cfajax.js) rather than the administrator endpoint the PoC names"
+  },
+  "CVE-2023-35078": {
+    "exclude": [
+      "*/mifs/*"
+    ],
+    "why": "the Ivanti EPMM application root; matched a sibling API path under a different space prefix (/mifs/asfV3/api/v2/authorized/users)"
+  },
+  "CVE-2024-4040": {
+    "exclude": [
+      "*/WebInterface/*"
+    ],
+    "why": "the CrushFTP web root; matched the product's login page (/WebInterface/login.html), which every deployment serves"
+  },
+  "CVE-2024-1708": {
+    "exclude": [
+      "*/SetupWizard.aspx/*"
+    ],
+    "why": "the endpoint of the auth bypass this PoC chains through before its own payload; it identifies that step rather than this CVE, and matched a capture of it"
+  }
+}
