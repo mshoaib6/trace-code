@@ -591,16 +591,15 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     path = _fresh_wildcard()
                     path_label = path
                 else:
-                    # Offer, as | alternatives, forms the trace may have recorded:
-                    # the full path+query, the path alone (query the log omitted,
-                    # e.g. a webshell), and a value-wildcarded query (a volatile
-                    # injected value the log recorded differently).
+                    # Offer, as | alternatives, the forms the trace may have
+                    # recorded: the full path+query and the path alone (a query
+                    # the log omitted, e.g. a webshell logged only by its path).
+                    # The concrete query VALUE is kept as a discriminator rather
+                    # than wildcarded -- a bare name=* matches any request to that
+                    # route and is a cross-CVE false positive.
                     alts = [path]
                     if query is not None and base is not None and base != path:
                         alts.append(base)
-                    vw = _value_wildcarded(path)
-                    if vw and vw not in alts:
-                        alts.append(vw)
                     path_label = " | ".join(alts)
                 client_id, host_id = "net_client", "proc_host"
                 if client_id not in output_graph:
