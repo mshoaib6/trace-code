@@ -361,11 +361,30 @@ def _fold_str(raw):
 
 
 def _exe_name(raw):
-    """Concrete executable label for a spawned child, or wildcard if dynamic."""
+    """Concrete executable label for a spawned child, or wildcard if dynamic.
+
+    A spawn operand is often a whole command line (``rundll32.exe payload.dll,Main``)
+    while a process collector records the child by its image name (``rundll32.exe``).
+    The command line is kept as the primary label, with the image name offered as
+    a ``|`` alternative so either recorded form aligns.
+    """
+    import re as _re
     lbl = _clean_label(raw)
     if lbl is None or str(lbl).strip() in ("", "*") or str(lbl).startswith("*"):
         return "*.(executable)"
-    return _path_tolerance(str(lbl))
+    full = _path_tolerance(str(lbl))
+    # First token of the command line (honouring a quoted program path), reduced
+    # to its basename -- the image name a process event carries.
+    cmd = str(lbl).strip()
+    m = _re.match(r'^"([^"]+)"|^(\S+)', cmd)
+    first = (m.group(1) or m.group(2)) if m else None
+    if first:
+        base = _re.split(r"[\\/]", first)[-1].strip()
+        if base and base != cmd and _re.search(r"[A-Za-z0-9]{2,}", base):
+            alt = "*" + base + "*"
+            if alt != full:
+                return full + " | " + alt
+    return full
 
 
 def _file_verb(mode_arg):
