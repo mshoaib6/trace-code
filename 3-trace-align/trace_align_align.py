@@ -60,8 +60,23 @@ def _node_compat(sig_node: str, prov_node: str, Gsig: nx.MultiDiGraph, Gprov: nx
     return label_matches(str(sd.get("label", "")), str(pd.get("label", "")))
 
 
+_REQUEST_CLASSES = {"read", "write"}
+
+
+def _sc_eq(a: str, b: str) -> bool:
+    """Event-class match, treating a request logged as read or write alike.
+
+    Whether a collector records an HTTP request as read (the server reads the
+    request) or write (the client writes to it) is a per-deployment convention
+    the template cannot fix, so read and write are interchangeable for the
+    request/file-access class. Other classes must match exactly."""
+    if a == b:
+        return True
+    return a in _REQUEST_CLASSES and b in _REQUEST_CLASSES
+
+
 def _edge_compat(syscall_sig: str, syscall_prov: str) -> bool:
-    return syscall_sig == syscall_prov
+    return _sc_eq(syscall_sig, syscall_prov)
 
 
 def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[Tuple[str, str, int]]:
@@ -87,7 +102,7 @@ def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, 
         if depth >= max_len:
             continue
         for _, v, _, ed in G.out_edges(u, keys=True, data=True):
-            seen2 = seen or (str(ed.get("syscall", "")) == syscall)
+            seen2 = seen or _sc_eq(str(ed.get("syscall", "")), syscall)
             state = (v, depth + 1, seen2)
             if state in visited:
                 continue

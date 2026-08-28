@@ -625,7 +625,7 @@ def sanitize(source: str, relevant_keys: Set[str]) -> str:
     # PoC does pre-flight checks the provenance log didn't capture, those
     # extra anchors block alignment. Keep only the 2 most-specific paths;
     # collapse the rest to generic wildcards.
-    _restrict_to_best_paths(tree, keep=1)
+    _restrict_to_best_paths(tree, keep=8)
     tree = _CollapseTryExcept().visit(tree)
     _ensure_requests_import(tree)
     ast.fix_missing_locations(tree)

@@ -88,19 +88,22 @@ def _http_endpoint_label(raw):
 
 
 def _query_body_anchor(kwargs):
-    r"""Concrete query/body parameters a request carries, as ``name=value``
-    tokens joined by wildcards.
+    r"""Concrete QUERY parameters a request carries, as ``name=value`` tokens
+    joined by wildcards.
 
-    The exploit's discriminating value often rides in ``params=``, ``data=`` or
-    ``json=`` rather than the path (``requests.get(u, params={'rest_route':
-    '/pmpro/v1/order', 'code': payload})``). A collector logs the whole request
-    line, so these belong in the resource label. Each concrete string value is
-    kept; a non-literal value (a payload variable) becomes ``name=*``. Returns a
-    ``*a=x*b=y*`` fragment, or None if nothing concrete is present.
+    Only ``params=`` is used: it becomes the URL query string, which the
+    request-line a network/access-log collector records contains
+    (``requests.get(u, params={'rest_route': '/pmpro/v1/order'})`` is logged as
+    ``?rest_route=/pmpro/v1/order``). ``data=``/``json=`` ride in the request
+    BODY, which those collectors do not log, so appending them would make the
+    resource label stricter than the trace (e.g. F5's command lives in the JSON
+    body, absent from the recorded ``/mgmt/tm/util/bash`` path). Each concrete
+    string value is kept; a non-literal (payload variable) becomes ``name=*``.
+    Returns a ``*a=x*b=y*`` fragment, or None if nothing concrete is present.
     """
     import ast as _ast
     toks = []
-    for key in ("params", "data", "json"):
+    for key in ("params",):
         raw = kwargs.get(key)
         if not raw:
             continue
@@ -312,6 +315,73 @@ def _fresh_wildcard():
     w = f"*{star_index}"
     star_index += 1
     return w
+
+
+def _inline_functions(tree, max_depth=3):
+    r"""Inline user-defined function calls, binding arguments to parameters.
+
+    Real PoCs route the request through helpers (``def exploit(t): url = t +
+    '/cli'; download(url=url)``), so the endpoint is only reachable across a
+    call. Following the paper's depth-3 inlining, we replace a statement-level
+    call to a user function with its body, prefixed by ``param = arg``
+    assignments, so value propagation then resolves the operand. Conservative:
+    statement-level calls only (bare ``f(...)`` or ``x = f(...)``), positional
+    and keyword args, no recursion, bounded depth.
+    """
+    funcs = {n.name: n for n in ast.walk(tree)
+             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def binds_for(fn, call):
+        out = []
+        names = [a.arg for a in fn.args.args]
+        # A method's first parameter is ``self``; a ``self.m(args)`` call passes
+        # no receiver in call.args, so drop it before aligning params to args.
+        if names and names[0] in ("self", "cls"):
+            names = names[1:]
+        for i, a in enumerate(call.args):
+            if i < len(names):
+                out.append(ast.Assign(targets=[ast.Name(id=names[i], ctx=ast.Store())], value=a))
+        for kw in call.keywords:
+            if kw.arg:
+                out.append(ast.Assign(targets=[ast.Name(id=kw.arg, ctx=ast.Store())], value=kw.value))
+        return out
+
+    def user_call(node):
+        if not isinstance(node, ast.Call):
+            return None
+        f = node.func
+        name = f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else None)
+        return funcs.get(name) if name in funcs else None
+
+    def inline_stmts(stmts, depth):
+        out = []
+        for st in stmts:
+            call = None
+            if isinstance(st, ast.Expr) and isinstance(st.value, ast.Call):
+                call = st.value
+            elif isinstance(st, ast.Assign) and isinstance(st.value, ast.Call):
+                call = st.value
+            fn = user_call(call) if call is not None else None
+            if fn is not None and depth < max_depth and fn.name != getattr(fn, "_inlining", None):
+                import copy as _copy
+                body = [_copy.deepcopy(s) for s in fn.body]
+                out.extend(binds_for(fn, call))
+                out.extend(inline_stmts(body, depth + 1))
+            elif isinstance(st, (ast.If, ast.For, ast.While, ast.With, ast.Try)):
+                for attr in ("body", "orelse", "finalbody"):
+                    if hasattr(st, attr) and getattr(st, attr):
+                        setattr(st, attr, inline_stmts(getattr(st, attr), depth))
+                out.append(st)
+            else:
+                out.append(st)
+        return out
+
+    try:
+        tree.body = inline_stmts(tree.body, 0)
+        ast.fix_missing_locations(tree)
+    except Exception:
+        pass
+    return tree
 
 
 def _inline_self_attrs(tree):
@@ -869,6 +939,7 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         base_process_node = Node(process_id, 'Process', process_id)
         if locus == "local":
             output_graph.add_node(process_id, node_info=base_process_node)
+        tree = _inline_functions(tree)
         tree = _inline_self_attrs(tree)
         handle_tree(tree, filename, foldername, output_graph, process_id)
 
