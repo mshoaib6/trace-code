@@ -605,5 +605,47 @@
       "class": "write",
       "reg": true
     }
+  ],
+  "impacket.dcerpc.v5.epm.hept_map()": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0
+    }
+  ],
+  "impacket.dcerpc.v5.par.hRpcAsyncAddPrinterDriver()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "impacket.dcerpc.v5.rprn.hRpcAddPrinterDriverEx()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "epm.hept_map()": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0
+    }
+  ],
+  "par.hRpcAsyncAddPrinterDriver()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "rprn.hRpcAddPrinterDriverEx()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
   ]
 }

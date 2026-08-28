@@ -338,6 +338,10 @@ def _with_basename_alt(label):
     return str(label) + " | " + alt
 
 
+import re as _re_mod
+_re_placeholder = _re_mod.compile(r"\{[^{}]*\}")
+
+
 def _fold_str(raw):
     r"""Fold a string-valued expression into a partially-concrete label.
 
@@ -381,11 +385,17 @@ def _fold_str(raw):
                     emit("*")
         elif isinstance(n, _ast.BinOp) and isinstance(n.op, _ast.Mod):
             walk(n.left)  # "%s/foo" % x keeps the format string's literal
+        elif (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+              and n.func.attr == "format"
+              and isinstance(n.func.value, _ast.Constant)
+              and isinstance(n.func.value.value, str)):
+            emit(_re_placeholder.sub("*", n.func.value.value))
         else:
             emit("*")
 
     walk(node)
     s = "".join(parts)
+    s = s.replace("\x00", "")
     # Strip a scheme+host if a full URL slipped through (paths only).
     return s
 
@@ -463,6 +473,47 @@ _KIND_KWARGS = {
     "net": ("address",),
     "generic": (),
 }
+
+
+_CONTAINER_LITERALS = {}
+
+
+def _reset_container_literals():
+    _CONTAINER_LITERALS.clear()
+
+
+def _record_container_literal(name, lit, variable_mapping):
+    keys = {name}
+    mapped = variable_mapping.get(name)
+    if mapped is not None:
+        try:
+            keys.add(ast.unparse(mapped))
+        except Exception:
+            pass
+    for k in keys:
+        vals = _CONTAINER_LITERALS.setdefault(k, [])
+        if lit not in vals:
+            vals.append(lit)
+
+
+def _container_path_alts(raw):
+    """Path-like operands written into the container this argument names."""
+    lits = _CONTAINER_LITERALS.get(str(raw).strip())
+    if not lits:
+        return None
+    out = []
+    for lit in lits:
+        lab = _operand_label(lit)
+        if lab is None:
+            continue
+        core = lab.strip("*")
+        if ("/" not in core and "\\" not in core
+                and not _re_mod.search(r"\.[A-Za-z0-9]{1,5}$", core)):
+            continue
+        lab = _with_basename_alt(lab)
+        if lab not in out:
+            out.append(lab)
+    return out or None
 
 
 def _resolve_operand(args, kwargs, rec, kind):
@@ -770,7 +821,6 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     # (/CFIDE/administrator/index.cfm vs .../enter.cfm). Bounded
                     # to the immediate parent, and only when that parent is itself
                     # distinctive, so it never widens to a site root.
-                    import re as _re2
                     core = (base or path).strip("*").split("*", 1)[0].split("?", 1)[0]
                     segs = [x for x in core.split("/") if x]
                     if len(segs) >= 2:
@@ -780,6 +830,11 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                             palt = "*/" + parent + "/*"
                             if palt not in alts:
                                 alts.append(palt)
+                        first = segs[0]
+                        if len(first) >= 3 and first.lower() not in _GENERIC_SEG:
+                            salt = "*/" + first + "/*"
+                            if salt not in alts:
+                                alts.append(salt)
                     path_label = " | ".join(alts)
                 client_id, host_id = "net_client", "proc_host"
                 if client_id not in output_graph:
@@ -833,6 +888,9 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
             if path_arg is None:
                 continue
             label = _operand_label(path_arg)
+            _alts = _container_path_alts(path_arg)
+            if _alts:
+                label = " | ".join(_alts)
             if "mode_arg" in rec:
                 verb = _file_verb(_arg_at(args, rec["mode_arg"]) or kwargs.get("mode"))
             else:
@@ -847,7 +905,8 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     # winreg subkey the PoC names omits that prefix, so anchor it
                     # with a leading wildcard.
                     label = "*" + str(label)
-                label = _with_basename_alt(label)
+                if " | " not in str(label):
+                    label = _with_basename_alt(label)
             output_graph.add_node(fid, node_info=Node(fid, "File", label))
             output_graph.add_edge(base_process_node, fid, syscall=verb)
             continue
@@ -961,6 +1020,18 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                     variable_name = target.id
                     mapped_expression = map_variables_and_remove_call_arguments(node.value, variable_mapping)
                     variable_mapping[variable_name] = mapped_expression
+                elif isinstance(target, ast.Subscript):
+                    base = target
+                    while isinstance(base, ast.Subscript):
+                        base = base.value
+                    if isinstance(base, ast.Name):
+                        try:
+                            lit = ast.unparse(
+                                map_variables_and_remove_call_arguments(node.value, variable_mapping))
+                        except Exception:
+                            lit = None
+                        if lit:
+                            _record_container_literal(base.id, lit, variable_mapping)
                 elif isinstance(target, ast.Tuple):
                     for element in target.elts:
                         if isinstance(element, ast.Name):
@@ -1347,6 +1418,7 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
     locus_mode: 'local', 'remote', or 'auto' (infer per the paper's manifest).
     """
     global types, syscalls, locus
+    _reset_container_literals()
     tree = clean_file(filename, foldername)
     if tree is None:
         return 0

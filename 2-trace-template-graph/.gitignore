@@ -3,3 +3,5 @@ __pycache__/
 graphs/
 sig_splunk/
 syscall_mapping.json.bak
+_sanitized/
+sig_out/

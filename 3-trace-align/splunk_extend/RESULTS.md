@@ -43,7 +43,7 @@ Every evaluated CVE is log-evident and has a public Python PoC. Two CVEs from th
 | CVE-2023-20198 | smokeintheshell/CVE-2023-20198 |
 | CVE-2023-22515 | Chocapikk/CVE-2023-22515 |
 | CVE-2023-22527 | Avento/CVE-2023-22527_Confluence_RCE |
-| CVE-2023-23397 | ka7ana/CVE-2023-23397 |
+| CVE-2023-23397 | vlad-a-man/CVE-2023-23397 |
 | CVE-2023-24489 | adhikara13/CVE-2023-24489-ShareFile |
 | CVE-2023-29298 | Rapid7 + jakabakos chain (with CVE-2023-26360) |
 | CVE-2023-29357 | Chocapikk/CVE-2023-29357 |
@@ -71,8 +71,14 @@ Every evaluated CVE is log-evident and has a public Python PoC. Two CVEs from th
 
 ## Reproduce
 
+Compile the templates from the public PoCs (stage 2), then align them against the
+Splunk-derived provenance graphs (stage 3):
+
 ```bash
-cd code/3-trace-align
+cd code/2-trace-template-graph
+python compile_pocs.py ../3-trace-align/poc_real/poc sig_out
+
+cd ../3-trace-align
 python trace_batch_run.py --graphs_dir splunk_extend/graphs --trace_align ./trace_align.py
 python trace_batch_run.py --graphs_dir splunk_extend/graphs --trace_align ./trace_align.py --all_pairs
 ```

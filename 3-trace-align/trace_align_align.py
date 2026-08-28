@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
@@ -62,16 +63,17 @@ def _node_compat(sig_node: str, prov_node: str, Gsig: nx.MultiDiGraph, Gprov: nx
 
 _REQUEST_CLASSES = {"read", "write"}
 
+# Off by default; set TRACE_ALIGN_RW_INTERCHANGE=1 to treat read and write as
+# one event class for request/file edges.
+_RW_INTERCHANGE = os.environ.get("TRACE_ALIGN_RW_INTERCHANGE", "") not in ("", "0", "false", "False")
+
 
 def _sc_eq(a: str, b: str) -> bool:
-    """Event-class match, treating a request logged as read or write alike.
-
-    Whether a collector records an HTTP request as read (the server reads the
-    request) or write (the client writes to it) is a per-deployment convention
-    the template cannot fix, so read and write are interchangeable for the
-    request/file-access class. Other classes must match exactly."""
+    """Event-class match; exact unless read/write interchange is enabled."""
     if a == b:
         return True
+    if not _RW_INTERCHANGE:
+        return False
     return a in _REQUEST_CLASSES and b in _REQUEST_CLASSES
 
 
@@ -224,8 +226,8 @@ def align_one(Gsig: nx.MultiDiGraph,
         ok, mapping = refine_alignment(Gsig, proc_subs[proc], spec.refine, verbose=verbose, kappa=kappa)
         if not ok:
             continue
-        ms, _, _ = match_score(kappa, mapping)
-        if raises_alert(ms, spec.score):
+        ms, raw, _ = match_score(kappa, mapping)
+        if raises_alert(ms, spec.score) and raw >= _CONF_WEIGHT[C3]:
             return AlignResult(True, proc, mapping)
 
     return AlignResult(False, None, {})

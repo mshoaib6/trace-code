@@ -835,7 +835,25 @@ class _SubstituteArgparseDefaults(ast.NodeTransformer):
         return node
 
 
-def sanitize(source: str, relevant_keys: Set[str]) -> str:
+def _anchor_bearing_locals(tree: ast.AST, relevant_keys: Set[str]) -> Set[str]:
+    """Call keys for local functions whose body reaches a Pi anchor."""
+    defs = {n.name: n for n in ast.walk(tree)
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    bearing: Set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        keys = set(relevant_keys) | {f"{b}()" for b in bearing}
+        for name, fn in defs.items():
+            if name in bearing:
+                continue
+            if _contains_anchor(fn, keys):
+                bearing.add(name)
+                changed = True
+    return {f"{n}()" for n in bearing}
+
+
+def sanitize(source: str, relevant_keys: Set[str], keep_call_chain: bool = False) -> str:
     tree = ast.parse(source)
     tree = _NormalizePathlib().visit(tree)
     tree = _NormalizeHttpWrappers(_collect_session_vars(tree)).visit(tree)
@@ -856,6 +874,9 @@ def sanitize(source: str, relevant_keys: Set[str]) -> str:
     tree = _CollapseTryExcept().visit(tree)
     _ensure_requests_import(tree)
     ast.fix_missing_locations(tree)
+
+    if keep_call_chain:
+        relevant_keys = set(relevant_keys) | _anchor_bearing_locals(tree, relevant_keys)
 
     # Collect unconditional deps that will always survive.
     deps: Set[str] = set()
@@ -914,18 +935,19 @@ def _py2_to_py3(source: str) -> str:
         return source
 
 
-def _sanitize_file(src: Path, dst: Path | None, keys: Set[str]) -> str:
+def _sanitize_file(src: Path, dst: Path | None, keys: Set[str],
+                   keep_call_chain: bool = False) -> str:
     source = src.read_text(encoding="utf-8", errors="replace")
     try:
-        out = sanitize(source, keys)
+        out = sanitize(source, keys, keep_call_chain)
     except SyntaxError:
         # Retry through the Python-3.10 match/case lowering, then a Python-2->3
         # conversion pass (many older exploit PoCs are Python 2).
         try:
-            out = sanitize(_lower_py310_syntax(source), keys)
+            out = sanitize(_lower_py310_syntax(source), keys, keep_call_chain)
         except SyntaxError:
             try:
-                out = sanitize(_lower_py310_syntax(_py2_to_py3(source)), keys)
+                out = sanitize(_lower_py310_syntax(_py2_to_py3(source)), keys, keep_call_chain)
             except SyntaxError as e3:
                 print(f"    WARN  {src.name}: skipped (parse error: {e3.msg})", file=sys.stderr)
                 out = ""
@@ -944,6 +966,8 @@ def main() -> int:
     p.add_argument("--out-dir", help="with --batch, directory to write sanitized files to")
     p.add_argument("--syscall-map", default=str(DEFAULT_SYSCALL_MAP),
                    help="path to stage-2 syscall_mapping.json")
+    p.add_argument("--keep-call-chain", action="store_true",
+                   help="also keep calls to local functions that reach an anchor")
     args = p.parse_args()
 
     keys = load_relevant_keys(Path(args.syscall_map))
@@ -955,14 +979,15 @@ def main() -> int:
         out_dir = Path(args.out_dir)
         n = 0
         for src in sorted(src_dir.glob("*.py")):
-            _sanitize_file(src, out_dir / src.name, keys)
+            _sanitize_file(src, out_dir / src.name, keys, args.keep_call_chain)
             print(f"  {src.name} -> {out_dir / src.name}")
             n += 1
         print(f"\nsanitized {n} file(s)")
         return 0
 
     src = Path(args.filename)
-    out_text = _sanitize_file(src, Path(args.out) if args.out else None, keys)
+    out_text = _sanitize_file(src, Path(args.out) if args.out else None, keys,
+                              args.keep_call_chain)
     if not args.out:
         sys.stdout.write(out_text)
     return 0
