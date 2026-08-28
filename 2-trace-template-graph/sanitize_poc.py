@@ -105,6 +105,23 @@ def _extract_documented_url_path(source: str) -> str | None:
         if any(k in pl for k in ("application-security", "/blog", "/advisor", "/research",
                                  "/vulnerab", "/security/", "disclosure", "/cve-", "/news")):
             continue
+        # A download/artifact link (a plugin .zip, an .exe) is not the exploited
+        # endpoint either.
+        clean = pl.split("?", 1)[0]
+        if any(clean.endswith(e) for e in (".zip", ".tar", ".gz", ".tgz", ".exe",
+                                           ".msi", ".deb", ".rpm", ".jar", ".whl",
+                                           ".pdf", ".png", ".jpg", ".gif", ".svg")):
+            continue
+        # Only a path that reads like an exploit endpoint is a usable anchor: a
+        # query string, an /api|/rest|/cgi segment, or a server-script extension.
+        endpointish = ("?" in path or "=" in path
+                       or any(s in clean for s in ("/api/", "/rest/", "/cgi", "/servlet",
+                                                   "/developmentserver", "/webui", "/mifs"))
+                       or any(clean.endswith(e) for e in
+                              (".php", ".jsp", ".jspx", ".asp", ".aspx", ".cfm", ".action",
+                               ".cgi", ".fcgi", ".do", ".asmx", ".ashx", ".pl", ".py", ".html")))
+        if not endpointish:
+            continue
         generic_host = any(tok in host_lower for tok in ("example.com", "target.example"))
         # Score: more path segments and longer path = more specific.
         depth = path.count("/")
@@ -444,19 +461,35 @@ class _ExtractLiteralPath(ast.NodeTransformer):
         return last in self._HTTP_CALL_ATTRS
 
     _URL_KWARGS = ("url", "uri", "endpoint")
+    _QUERY_KWARGS = ("params", "data", "json")
+
+    def _inline_query_kws(self, keywords):
+        """Replace params=/data=/json= that reference a dict *variable* with the
+        dict literal, so stage 2 can read the query the request carries
+        (``data = {'rest_route': '/pmpro/v1/order'}; requests.get(u, params=data)``)."""
+        out = []
+        for kw in keywords:
+            if kw.arg in self._QUERY_KWARGS:
+                resolved = self._resolve(kw.value)
+                if isinstance(resolved, ast.Dict):
+                    out.append(ast.keyword(arg=kw.arg, value=resolved))
+                    continue
+            out.append(kw)
+        return out
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         if not self._is_http_call(node):
             return node
         # The URL is the first positional arg, or a url=/uri= keyword (many PoCs
-        # write requests.get(url=...)). Rewrite whichever carries it; headers and
-        # bodies stay untouched.
+        # write requests.get(url=...)). Rewrite whichever carries it; a query
+        # passed as a dict variable is inlined so its params survive.
+        kws = self._inline_query_kws(node.keywords)
         if node.args:
             new_args = [self._rewrite_url_arg(node.args[0])] + list(node.args[1:])
-            return ast.Call(func=node.func, args=new_args, keywords=node.keywords)
+            return ast.Call(func=node.func, args=new_args, keywords=kws)
         new_kws = []
-        for kw in node.keywords:
+        for kw in kws:
             if kw.arg in self._URL_KWARGS:
                 new_kws.append(ast.keyword(arg=kw.arg, value=self._rewrite_url_arg(kw.value)))
             else:
