@@ -411,16 +411,25 @@ class _ExtractLiteralPath(ast.NodeTransformer):
         last = name.rsplit(".", 1)[-1]
         return last in self._HTTP_CALL_ATTRS
 
+    _URL_KWARGS = ("url", "uri", "endpoint")
+
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         if not self._is_http_call(node):
             return node
-        # Rewrite only the first positional arg (the URL). Headers/bodies
-        # stay untouched.
-        if not node.args:
-            return node
-        new_args = [self._rewrite_url_arg(node.args[0])] + list(node.args[1:])
-        return ast.Call(func=node.func, args=new_args, keywords=node.keywords)
+        # The URL is the first positional arg, or a url=/uri= keyword (many PoCs
+        # write requests.get(url=...)). Rewrite whichever carries it; headers and
+        # bodies stay untouched.
+        if node.args:
+            new_args = [self._rewrite_url_arg(node.args[0])] + list(node.args[1:])
+            return ast.Call(func=node.func, args=new_args, keywords=node.keywords)
+        new_kws = []
+        for kw in node.keywords:
+            if kw.arg in self._URL_KWARGS:
+                new_kws.append(ast.keyword(arg=kw.arg, value=self._rewrite_url_arg(kw.value)))
+            else:
+                new_kws.append(kw)
+        return ast.Call(func=node.func, args=node.args, keywords=new_kws)
 
 
 class _NormalizeHttpWrappers(ast.NodeTransformer):
@@ -435,16 +444,31 @@ class _NormalizeHttpWrappers(ast.NodeTransformer):
     (``requests.get``, ``requests.post``), so we rewrite here."""
 
     _METHODS = {"GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"}
+    _VERBS = {"get", "post", "put", "delete", "head", "patch"}
 
     # Names of user-defined wrapper methods that are almost always HTTP dispatchers.
     _WRAPPER_SUFFIXES = (".request", ".send_request", ".do_request", ".make_request",
                          ".http_request", ".send")
+
+    def __init__(self, session_vars=None):
+        self.session_vars = session_vars or set()
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
         name = _dotted_name(node.func)
         if name is None:
             return node
+        # A call on a requests/httpx session object -- session.get(url, ...) --
+        # is an HTTP verb call, but stage 2 keys on requests.<verb>; the receiver
+        # is often a parameter it cannot trace back to requests.Session(). Rewrite
+        # <session-var>.<verb>(...) to requests.<verb>(...) so it is recognised.
+        func = node.func
+        if (isinstance(func, ast.Attribute) and func.attr in self._VERBS
+                and isinstance(func.value, ast.Name)
+                and func.value.id in self.session_vars):
+            new_func = ast.Attribute(value=ast.Name(id="requests", ctx=ast.Load()),
+                                     attr=func.attr, ctx=ast.Load())
+            return ast.Call(func=new_func, args=node.args, keywords=node.keywords)
         is_wrapper = any(name.endswith(s) for s in self._WRAPPER_SUFFIXES)
         if not is_wrapper:
             return node
@@ -612,9 +636,28 @@ def _score_path(path: str, method: str) -> int:
     return score
 
 
+_SESSION_FACTORIES = ("requests.session", "requests.Session", "httpx.Client",
+                      "httpx.AsyncClient", "aiohttp.ClientSession")
+
+
+def _collect_session_vars(tree: ast.Module) -> Set[str]:
+    """Names bound to a requests/httpx session object, so calls on them
+    (``session.get(...)``) can be normalized to ``requests.<verb>``."""
+    out: Set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            fn = _dotted_name(n.value.func)
+            if fn and any(fn == f or fn.endswith("." + f.split(".")[-1]) for f in _SESSION_FACTORIES):
+                if fn.rsplit(".", 1)[-1] in ("session", "Session", "Client", "AsyncClient", "ClientSession"):
+                    for t in n.targets:
+                        if isinstance(t, ast.Name):
+                            out.add(t.id)
+    return out
+
+
 def sanitize(source: str, relevant_keys: Set[str]) -> str:
     tree = ast.parse(source)
-    tree = _NormalizeHttpWrappers().visit(tree)
+    tree = _NormalizeHttpWrappers(_collect_session_vars(tree)).visit(tree)
     fallback = _extract_documented_url_path(source)
     extractor = _ExtractLiteralPath()
     extractor.fallback_url = fallback
