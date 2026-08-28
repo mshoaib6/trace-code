@@ -48,6 +48,17 @@ DEFAULT_SYSCALL_MAP = HERE / "syscall_mapping.json"
 import re as _re_preparse
 _URL_IN_COMMENT_RE = _re_preparse.compile(r"https?://[^\s\"\'<>`]+")
 
+# Hosts that publish XML/SOAP *namespace identifiers*. A URL under one of them
+# (``http://schemas.xmlsoap.org/soap/envelope/`` in a SOAP envelope, an
+# XMLSchema or WS-* namespace in a WSDL body) names a vocabulary carried inside
+# the request payload; it is never a resource the target serves, so it must not
+# be mistaken for the documented exploit endpoint.
+_NAMESPACE_HOSTS = ("schemas.xmlsoap.org", "www.w3.org", "w3.org",
+                    "schemas.microsoft.com", "schemas.openxmlformats.org",
+                    "docs.oasis-open.org", "xmlns.com", "purl.org",
+                    "schemas.android.com", "java.sun.com", "xml.apache.org",
+                    "namespaces.")
+
 
 def _extract_documented_url_path(source: str) -> str | None:
     """Scan raw source text for URLs appearing in comments/docstrings and
@@ -77,7 +88,10 @@ def _extract_documented_url_path(source: str) -> str | None:
     best = None
     best_score = (-1, -1)
     for url in urls:
-        url = url.rstrip(".,;:)]}'\"")
+        # A URL sitting inside a *quoted* Python string keeps the backslash of
+        # the escaped closing quote (\"http://h/p/\" -> http://h/p/\); it is
+        # source syntax, not part of the path.
+        url = url.rstrip(".,;:)]}'\"\\")
         # Drop scheme+host to get path.
         parts = url.split("://", 1)
         if len(parts) != 2 or "/" not in parts[1]:
@@ -99,6 +113,9 @@ def _extract_documented_url_path(source: str) -> str | None:
                       "packetstormsecurity.com", "snyk.io", "cvefeed.io",
                       "tenable.com", "rapid7.com", "youtube.com", "linkedin.com")
         if any(h in host_lower for h in skip_hosts):
+            continue
+        # An XML/SOAP namespace identifier is payload vocabulary, not a route.
+        if any(h in host_lower for h in _NAMESPACE_HOSTS):
             continue
         # A disclosure/blog link is documentation, not a request the trace
         # records; its path reads like prose (hyphenated words, the CVE id).
@@ -199,11 +216,43 @@ def _names_bound(stmt: ast.AST) -> Set[str]:
     return out
 
 
+def _assign_keys(node: ast.AST) -> List[str]:
+    r"""Pi keys for an attribute assignment ``obj.Prop = value``.
+
+    A property assignment can be an operation in its own right -- an automation
+    object model exposes behaviour through properties, so a PoC whose payload is
+    ``item.ReminderSoundFile = r'\\host\share\x.wav'`` makes no call at all --
+    and the extractor lowers it when Pi maps the property. Pruning has to see the
+    same thing, or it removes the only statement that carries the payload.
+
+    Keys mirror the extractor's: the source-level dotted path and the bare
+    attribute name (the form a receiver the reader cannot resolve to a module
+    reduces to), each ending in ``=`` the way a call key ends in ``()``.
+    """
+    targets: List[ast.AST] = []
+    if isinstance(node, ast.Assign):
+        targets = list(node.targets)
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        targets = [node.target]
+    out: List[str] = []
+    for t in targets:
+        if not isinstance(t, ast.Attribute):
+            continue
+        dotted = _dotted_name(t)
+        if dotted:
+            out.append(f"{dotted}=")
+        out.append(f"{t.attr}=")
+    return out
+
+
 def _contains_anchor(stmt: ast.AST, relevant_keys: Set[str]) -> bool:
     for n in ast.walk(stmt):
         if isinstance(n, ast.Call):
             k = _call_key(n)
             if k is not None and k in relevant_keys and k not in NON_IOC_CALLS:
+                return True
+        elif isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            if any(k in relevant_keys for k in _assign_keys(n)):
                 return True
     return False
 
@@ -350,10 +399,24 @@ class _ExtractLiteralPath(ast.NodeTransformer):
     etc.) — it leaves the rest of the PoC alone.
     """
 
-    def _extract_literal(self, node: ast.AST, _depth: int = 0) -> str | None:
-        """Return the concatenated literal portion, or None if nothing concrete."""
+    def _extract_literal(self, node: ast.AST, _depth: int = 0,
+                         _expanding: frozenset = frozenset()) -> str | None:
+        """Return the concatenated literal portion, or None if nothing concrete.
+
+        ``_expanding`` carries the names already substituted along this path. A
+        self-referential assignment -- ``url = url + '/Install'``, the accumulate
+        form of ``url = f'{base}/Install'`` -- then contributes its own literal
+        exactly once and stops, instead of re-entering the same name until the
+        depth limit and repeating the suffix sixteen times."""
         if _depth > 16:
             return None
+        if isinstance(node, ast.Name):
+            if node.id in _expanding:
+                return None
+            resolved = self._resolve(node)
+            if resolved is node:
+                return None
+            return self._extract_literal(resolved, _depth + 1, _expanding | {node.id})
         node = self._resolve(node)
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             return node.value
@@ -363,18 +426,18 @@ class _ExtractLiteralPath(ast.NodeTransformer):
             return "".join(parts) if parts else None
         if isinstance(node, ast.BinOp):
             if isinstance(node.op, ast.Add):
-                left = self._extract_literal(node.left, _depth + 1) or ""
-                right = self._extract_literal(node.right, _depth + 1) or ""
+                left = self._extract_literal(node.left, _depth + 1, _expanding) or ""
+                right = self._extract_literal(node.right, _depth + 1, _expanding) or ""
                 combined = left + right
                 return combined or None
             if isinstance(node.op, ast.Mod):
-                return self._extract_literal(node.left, _depth + 1)
+                return self._extract_literal(node.left, _depth + 1, _expanding)
         if isinstance(node, ast.IfExp):
             # ``args.out if args.out else "default.rar"`` -- a PoC's default
             # output name lives in one branch of a conditional; take whichever
             # branch yields a literal.
             for branch in (node.body, node.orelse):
-                lit = self._extract_literal(branch, _depth + 1)
+                lit = self._extract_literal(branch, _depth + 1, _expanding)
                 if lit:
                     return lit
             return None
@@ -384,22 +447,49 @@ class _ExtractLiteralPath(ast.NodeTransformer):
             # urljoin(base, path) / os.path.join(base, path): the last arg is the
             # distinctive path the trace records.
             if leaf in ("urljoin", "join") and len(node.args) >= 2:
-                return self._extract_literal(node.args[-1], _depth + 1)
+                return self._extract_literal(node.args[-1], _depth + 1, _expanding)
             # "/path/{}".format(x): the format template carries the literal path.
             if leaf == "format" and isinstance(node.func, ast.Attribute):
-                return self._extract_literal(node.func.value, _depth + 1)
+                return self._extract_literal(node.func.value, _depth + 1, _expanding)
             # quote(x)/quote_plus(x)/unquote(x): URL-encoding is transparent to
             # the discriminating tokens.
             if leaf in ("quote", "quote_plus", "unquote", "urlencode") and node.args:
-                return self._extract_literal(node.args[0], _depth + 1)
+                return self._extract_literal(node.args[0], _depth + 1, _expanding)
         return None
 
     #: set by sanitize() before .visit() — URL path extracted from source comments/docstrings
     fallback_url: str | None = None
-    #: {name: ast-node} map of top-level + function-scoped simple assignments,
-    #: so we can chase ``url = f'{host}/api/v1/foo'`` back when ``requests.get(url)``
-    #: is called later.
+    #: {scope-node-id: {name: ast-node}} maps of module- and function-scoped
+    #: simple assignments (key ``None`` is module scope), so we can chase
+    #: ``url = f'{host}/api/v1/foo'`` back when ``requests.get(url)`` is called
+    #: later in the same scope. Set via :meth:`set_var_maps`.
+    scope_maps: dict = None  # type: ignore
+    #: the map in force while visiting the current scope.
     var_map: dict = None  # type: ignore
+
+    def set_var_maps(self, maps: dict) -> None:
+        self.scope_maps = maps or {}
+        self.var_map = dict((self.scope_maps.get(None) or ({}, set()))[0])
+
+    def _visit_scope(self, node: ast.AST) -> ast.AST:
+        """Visit a function body with its own locals layered over the enclosing
+        scope's, the enclosing value dropped for every name this scope binds."""
+        outer = self.var_map
+        entry = (self.scope_maps or {}).get(id(node))
+        if entry is not None:
+            local, bound = entry
+            merged = {k: v for k, v in (outer or {}).items() if k not in bound}
+            merged.update(local)
+            self.var_map = merged
+        self.generic_visit(node)
+        self.var_map = outer
+        return node
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
+        return self._visit_scope(node)
+
+    def visit_AsyncFunctionDef(self, node) -> ast.AST:
+        return self._visit_scope(node)
 
     #: {dest: Constant} argparse defaults, so args.endpoint resolves to its
     #: declared default literal.
@@ -635,18 +725,73 @@ def _ensure_requests_import(tree: ast.Module) -> None:
         ast.fix_missing_locations(tree)
 
 
-def _collect_var_map(tree: ast.Module) -> dict:
-    """Build a ``{name: rhs-ast}`` map for simple single-target assignments at
-    module scope AND inside each function body (separately).
+_SCOPE_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
-    Keeps only names that are assigned *exactly once* across the whole file
-    and whose RHS is a string-producing expression (Constant, JoinedStr, or
-    BinOp with either). This biases toward the "one canonical URL variable"
-    pattern (``url = f'{base}/api/foo'; requests.get(url)``) while rejecting
-    helper-method locals that are reused across different call paths."""
-    counts = {}
-    candidate = {}
-    for node in ast.walk(tree):
+
+def _iter_scope_stmts(scope: ast.AST):
+    """Yield every node of ``scope``'s own body, never descending into a nested
+    function or lambda -- those own their local names, so their assignments are
+    not this scope's."""
+    stack = list(getattr(scope, "body", []) or [])
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _SCOPE_TYPES):
+            continue
+        yield node
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _binds_name(node: ast.AST):
+    """Names this statement binds, whatever the binding form."""
+    out = []
+    if isinstance(node, ast.Assign):
+        for t in node.targets:
+            out.extend(n.id for n in ast.walk(t) if isinstance(n, ast.Name))
+    elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+        out.extend(n.id for n in ast.walk(node.target) if isinstance(n, ast.Name))
+    elif isinstance(node, (ast.For, ast.AsyncFor)):
+        out.extend(n.id for n in ast.walk(node.target) if isinstance(n, ast.Name))
+    elif isinstance(node, ast.ExceptHandler) and node.name:
+        out.append(node.name)
+    elif isinstance(node, (ast.With, ast.AsyncWith)):
+        for item in node.items:
+            if item.optional_vars is not None:
+                out.extend(n.id for n in ast.walk(item.optional_vars)
+                           if isinstance(n, ast.Name))
+    elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        out.append(node.name)
+    return out
+
+
+def _param_names(scope: ast.AST):
+    a = getattr(scope, "args", None)
+    if a is None:
+        return []
+    names = [x.arg for x in list(getattr(a, "posonlyargs", []) or []) + list(a.args) + list(a.kwonlyargs)]
+    for extra in (a.vararg, a.kwarg):
+        if extra is not None:
+            names.append(extra.arg)
+    return names
+
+
+def _scope_var_map(scope: ast.AST):
+    """``(resolvable, bound)`` for one scope.
+
+    ``bound`` is every name the scope binds -- assignments in any form plus the
+    parameters -- so an enclosing scope's value for the same name is shadowed
+    rather than substituted into a local that means something else.
+
+    ``resolvable`` keeps a name only when the scope assigns it *exactly once*,
+    with a string-producing RHS (Constant, JoinedStr, BinOp of either): a name
+    the scope rebinds has no single value to substitute. A self-referential
+    single assignment (``url = url + '/x'``) stays resolvable -- the literal it
+    contributes is real; :meth:`_ExtractLiteralPath._extract_literal` stops the
+    expansion from re-entering the name."""
+    counts: dict = {}
+    candidate: dict = {}
+    bound = set(_param_names(scope))
+    for node in _iter_scope_stmts(scope):
+        bound.update(_binds_name(node))
         targets = []
         rhs = None
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
@@ -659,7 +804,26 @@ def _collect_var_map(tree: ast.Module) -> dict:
             counts[name] = counts.get(name, 0) + 1
             if _looks_stringy(rhs):
                 candidate.setdefault(name, rhs)
-    return {n: candidate[n] for n in candidate if counts[n] == 1}
+    return ({n: candidate[n] for n in candidate if counts[n] == 1}, bound)
+
+
+def _collect_var_map(tree: ast.Module) -> dict:
+    """Build ``{scope-node-id: {name: rhs-ast}}`` for the module and for each
+    function body *separately*, plus the module map under key ``None``.
+
+    Resolution is per Python's own scoping: a name a function binds once refers
+    to that function's value, and the module map is the fallback for names the
+    function never binds. Counting per scope (instead of once across the whole
+    file) is what lets a PoC that builds its URL the same way in two helpers --
+    ``def check(t): url = t + '/a/wsdl'`` and ``def run(t): url = t +
+    '/a/Servlet'`` -- keep both concrete paths. Counting globally saw ``url``
+    assigned twice, called it ambiguous, and dropped both, so every request in
+    such a PoC lost its path anchor."""
+    maps = {None: _scope_var_map(tree)}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            maps[id(node)] = _scope_var_map(node)
+    return maps
 
 
 def _looks_stringy(node: ast.AST) -> bool:
@@ -836,21 +1000,72 @@ class _SubstituteArgparseDefaults(ast.NodeTransformer):
 
 
 def _anchor_bearing_locals(tree: ast.AST, relevant_keys: Set[str]) -> Set[str]:
-    """Call keys for local functions whose body reaches a Pi anchor."""
+    """Call keys for local callables whose body reaches a Pi anchor.
+
+    A PoC routes its anchors through its own abstractions. Beside the plain
+    helper function, the recurring shape is a class that fixes the operands in
+    ``__init__`` and performs the I/O in a method, driven by an entry point
+    that holds the only concrete values::
+
+        obj = Exploit(command, outfile)
+        obj.run()
+
+    Neither statement contains a Pi call, so anchor-driven pruning deletes the
+    entry point and with it the binding of the constructor arguments -- the
+    anchor survives with an unresolvable operand. Treat a call as anchor
+    bearing when the callee is a local callable that transitively reaches an
+    anchor: a function, a class whose body does, or a method invoked on a local
+    instance of such a class.
+    """
+    classes = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+    methods_of = {
+        name: {m.name for m in cls.body
+               if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        for name, cls in classes.items()
+    }
     defs = {n.name: n for n in ast.walk(tree)
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     bearing: Set[str] = set()
+    bearing_classes: Set[str] = set()
     changed = True
     while changed:
         changed = False
-        keys = set(relevant_keys) | {f"{b}()" for b in bearing}
+        # A bearing callee is reachable as a bare name, as ``self.<m>()`` from a
+        # sibling method, and as ``<instance>.<m>()`` from the entry point.
+        keys = set(relevant_keys)
+        for b in bearing:
+            keys.add(f"{b}()")
+            keys.add(f"self.{b}()")
+        keys |= {f"{c}()" for c in bearing_classes}
         for name, fn in defs.items():
             if name in bearing:
                 continue
             if _contains_anchor(fn, keys):
                 bearing.add(name)
                 changed = True
-    return {f"{n}()" for n in bearing}
+        for name, cls in classes.items():
+            if name in bearing_classes:
+                continue
+            if _contains_anchor(cls, keys):
+                bearing_classes.add(name)
+                changed = True
+
+    out = {f"{n}()" for n in bearing} | {f"{c}()" for c in bearing_classes}
+    # ``obj = Cls(...)`` binds an instance; a later ``obj.<m>()`` naming a
+    # bearing method of that class is the call that drives the anchor.
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name) or not isinstance(node.value, ast.Call):
+            continue
+        cname = _dotted_name(node.value.func)
+        if cname not in classes:
+            continue
+        for m in methods_of.get(cname, ()):  # only the class's own methods
+            if m in bearing:
+                out.add(f"{target.id}.{m}()")
+    return out
 
 
 def sanitize(source: str, relevant_keys: Set[str], keep_call_chain: bool = False) -> str:
@@ -860,7 +1075,7 @@ def sanitize(source: str, relevant_keys: Set[str], keep_call_chain: bool = False
     fallback = _extract_documented_url_path(source)
     extractor = _ExtractLiteralPath()
     extractor.fallback_url = fallback
-    extractor.var_map = _collect_var_map(tree)
+    extractor.set_var_maps(_collect_var_map(tree))
     _apd = _collect_argparse_defaults(tree)
     extractor.argparse_defaults = _apd
     tree = _SubstituteArgparseDefaults(_apd).visit(tree)

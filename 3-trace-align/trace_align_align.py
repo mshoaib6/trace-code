@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
-import os
+import re
 from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
@@ -61,24 +61,138 @@ def _node_compat(sig_node: str, prov_node: str, Gsig: nx.MultiDiGraph, Gprov: nx
     return label_matches(str(sd.get("label", "")), str(pd.get("label", "")))
 
 
+# ---------------------------------------------------------------------------
+# Request/response normalization
+#
+# read and write are two event classes, and for a filesystem edge the
+# difference is real: a dropper WRITING a payload and the payload later being
+# READ is a genuine ordering that a template is entitled to test.  For one
+# specific kind of edge the difference is not real at all.  When a service
+# handles an HTTP request, the collectors in this corpus record the whole
+# transaction as a single edge between the service process and the request
+# target, and they do not agree on its direction -- some record the service
+# reading the request target, some record it writing the response, and some
+# captures contain both directions for the same target.  Direction therefore
+# carries no information on a request/response edge, so read and write collapse
+# to one event class there, and only there.
+#
+# The scope is decided per edge from the vertices the edge touches, never from
+# which template is being matched.  Evidence that an object is a web resource
+# rather than a file on disk:
+#
+#   * its name carries a path segment that a web server executes to answer a
+#     request (.aspx, .jsp, .php, ...).  Such an object is a web resource
+#     wherever it happens to sit on disk, so this counts on either graph.
+#   * it is an HTTP request target: a rooted path, the origin-form that a
+#     request line carries.  On the template side a label is a pattern the
+#     compiler wrote from the exploit's request target, so a rooted pattern is
+#     a request target by construction.  On the provenance side a rooted path
+#     is just as likely an ordinary POSIX file, so it counts only for a service
+#     the capture shows being reached from the network -- the
+#     net -> process -> resource shape.
+#
+# Both endpoints of the comparison must show such evidence.  A template that
+# names an ordinary file, or a provenance edge that touches one, keeps read and
+# write apart.
+# ---------------------------------------------------------------------------
+
 _REQUEST_CLASSES = {"read", "write"}
 
-# Off by default; set TRACE_ALIGN_RW_INTERCHANGE=1 to treat read and write as
-# one event class for request/file edges.
-_RW_INTERCHANGE = os.environ.get("TRACE_ALIGN_RW_INTERCHANGE", "") not in ("", "0", "false", "False")
+# Pages a web server executes to answer a request.
+_WEB_HANDLER_EXT = (
+    ".asp", ".aspx", ".ashx", ".asmx", ".axd",
+    ".jsp", ".jspx", ".jsf", ".do", ".action",
+    ".php", ".php3", ".php4", ".php5", ".php7", ".phtml",
+    ".cgi", ".fcgi", ".cfm", ".cfc", ".vm",
+)
+
+# A header or metadata pseudo-object an HTTP-aware collector attaches to the
+# transaction rather than to a file, e.g. ``ua::curl/7.81.0``.
+_PSEUDO_OBJECT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+.-]*::")
+
+# The edge a capture records when a remote peer reaches a service.
+_REMOTE_ACCESS = "access"
 
 
-def _sc_eq(a: str, b: str) -> bool:
-    """Event-class match; exact unless read/write interchange is enabled."""
-    if a == b:
-        return True
-    if not _RW_INTERCHANGE:
+def _label_branches(label: str) -> List[str]:
+    s = str(label or "")
+    return [b.strip() for b in s.split("|")] if "|" in s else [s.strip()]
+
+
+def _names_web_handler(branch: str) -> bool:
+    """True when a path segment of the name is a server-executed page."""
+    head = branch.replace("\\", "/").split("?", 1)[0]
+    return any(seg.strip("*").lower().endswith(_WEB_HANDLER_EXT) for seg in head.split("/"))
+
+
+def _is_request_target(branch: str) -> bool:
+    """True for an HTTP request target: the rooted origin-form path.
+
+    A leading wildcard is how a template writes "any scheme and authority", so
+    it is stripped first.  A backslash means the name is a Windows or UNC
+    filesystem path that merely happens to be rooted, not a request target.
+    """
+    s = branch.lstrip("*")
+    return s.startswith("/") and "\\" not in s
+
+
+def _process_and_object(G: nx.MultiDiGraph, u: str, v: str) -> Tuple[Optional[str], Optional[str]]:
+    """Orient one edge into (process endpoint, object endpoint).
+
+    Captures record a read either way round, so the endpoints are inspected in
+    both orders.
+    """
+    for p, o in ((u, v), (v, u)):
+        if G.nodes[p].get("type") == "process" and G.nodes[o].get("type") != "process":
+            return p, o
+    return None, None
+
+
+def _reached_from_network(G: nx.MultiDiGraph, proc: str) -> bool:
+    """True when the capture shows a remote peer reaching this process."""
+    return any(G.nodes[a].get("type") == "net" and str(d.get("syscall", "")) == _REMOTE_ACCESS
+               for a, _, d in G.in_edges(proc, data=True))
+
+
+def _template_request_edge(Gsig: nx.MultiDiGraph, u: str, v: str) -> bool:
+    """True when a template edge is written against a web resource."""
+    proc, obj = _process_and_object(Gsig, u, v)
+    if obj is None:
         return False
-    return a in _REQUEST_CLASSES and b in _REQUEST_CLASSES
+    return any(_is_request_target(b) or _names_web_handler(b)
+               for b in _label_branches(str(Gsig.nodes[obj].get("label", ""))))
 
 
-def _edge_compat(syscall_sig: str, syscall_prov: str) -> bool:
-    return _sc_eq(syscall_sig, syscall_prov)
+def _observed_request_edge(G: nx.MultiDiGraph, u: str, v: str) -> bool:
+    """True when a provenance edge records a web resource being served."""
+    proc, obj = _process_and_object(G, u, v)
+    if obj is None:
+        return False
+    label = str(G.nodes[obj].get("label", "")).strip()
+    if any(_names_web_handler(b) for b in _label_branches(label)):
+        return True
+    if not _reached_from_network(G, proc):
+        return False
+    return label.startswith("/") or _PSEUDO_OBJECT_RE.match(label) is not None
+
+
+def _sc_eq(syscall_prov: str, syscall_sig: str,
+           G: Optional[nx.MultiDiGraph] = None,
+           u: Optional[str] = None, v: Optional[str] = None,
+           template_request: bool = False) -> bool:
+    """Event-class match.
+
+    Exact, except that read and write are one class on a request/response edge
+    against a web resource -- which needs the template edge to be written
+    against one and the provenance edge to record one.
+    """
+    if syscall_prov == syscall_sig:
+        return True
+    if not template_request or G is None:
+        return False
+    if syscall_prov not in _REQUEST_CLASSES or syscall_sig not in _REQUEST_CLASSES:
+        return False
+    return _observed_request_edge(G, u, v)
 
 
 def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[Tuple[str, str, int]]:
@@ -90,7 +204,7 @@ def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[T
 
 
 def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, k: int,
-                          max_depth: int = 5) -> bool:
+                          max_depth: int = 5, template_request: bool = False) -> bool:
     if src == dst:
         return True
     # A template edge may span at most k intermediate vertices, and no search
@@ -104,7 +218,8 @@ def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, 
         if depth >= max_len:
             continue
         for _, v, _, ed in G.out_edges(u, keys=True, data=True):
-            seen2 = seen or _sc_eq(str(ed.get("syscall", "")), syscall)
+            seen2 = seen or _sc_eq(str(ed.get("syscall", "")), syscall, G, u, v,
+                                   template_request=template_request)
             state = (v, depth + 1, seen2)
             if state in visited:
                 continue
@@ -132,7 +247,7 @@ def refine_alignment(Gsig: nx.MultiDiGraph,
 
     sig_edges = []
     for u, v, _, ed in Gsig.edges(keys=True, data=True):
-        sig_edges.append((u, v, str(ed.get("syscall", ""))))
+        sig_edges.append((u, v, str(ed.get("syscall", "")), _template_request_edge(Gsig, u, v)))
 
     assignment: Dict[str, str] = {}
     used_prov: set[str] = set()
@@ -140,11 +255,12 @@ def refine_alignment(Gsig: nx.MultiDiGraph,
     def consistent_partial(sn: str, pn: str) -> bool:
         tmp_assign = dict(assignment)
         tmp_assign[sn] = pn
-        for su, sv, sc in sig_edges:
+        for su, sv, sc, req in sig_edges:
             if su in tmp_assign and sv in tmp_assign:
                 pu, pv = tmp_assign[su], tmp_assign[sv]
                 ok = _find_k_tolerant_path(Gcand, pu, pv, sc, refine_spec.k,
-                                           max_depth=refine_spec.max_depth)
+                                           max_depth=refine_spec.max_depth,
+                                           template_request=req)
                 if not ok:
                     return False
         return True

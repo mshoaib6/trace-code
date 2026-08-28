@@ -1,4 +1,4 @@
-from helpers import clean_file, is_user_defined_module, map_variables_and_remove_call_arguments, process_call_node, function_is_relevant
+from helpers import clean_file, is_user_defined_module, map_variables_and_remove_call_arguments, process_call_node, function_is_relevant, get_attribute_name
 from split_tree import split_tree
 import ast
 import json
@@ -234,6 +234,70 @@ def _value_wildcarded(label):
     return out if changed[0] else None
 
 
+def _pins_a_name(rung):
+    r"""True when a label fixes some whole name, not merely the start of one.
+
+    A label identifies an artifact only through the parts of a name it fixes
+    *end to end*. Two things qualify: a path component delimited by separators
+    on both sides (``*/App_Extensions/*`` fixes ``App_Extensions``), and a
+    complete file name -- a stem together with its extension (``*sessions.obj*``,
+    ``*/human2.aspx*``).
+
+    Text that is only the head of a name pins nothing: ``*/wordpress*`` matches
+    every name that merely begins that way, at any depth, so it names a place
+    rather than an artifact. A bare extension pins nothing either -- it is a
+    stem-less tail, and an extension is a file FORMAT, which every product has
+    files of. Text taken from the query string (it carries ``?``, ``=`` or
+    ``&``) is not part of the path at all and so names no resource.
+
+    """
+    import re as _re
+    for seg in str(rung).replace("\\", "/").split("/"):
+        core = seg.strip("*")
+        if not core or "*" in core:
+            continue
+        if any(ch in core for ch in "?=&"):
+            continue                      # query text, not a path component
+        if core == seg:
+            return True                   # a component fixed end to end
+        m = _re.search(r"\.[A-Za-z0-9]{1,6}$", core)
+        if m and len(core) > len(m.group(0)):
+            return True                   # a complete file name
+    return False
+
+
+def _resource_rungs(rung):
+    r"""The forms of one resource-label rung that are worth emitting.
+
+    Every rung on a resource label -- the path the PoC fixed and each coarser
+    truncation offered beside it -- has to pin a whole name to be worth
+    matching on (see _pins_a_name); generalized past that point it is a
+    cross-CVE false positive rather than a tolerance.
+
+    A rung that already pins a name is emitted as written. A rung that pins
+    nothing may still be recoverable: a resource label carries a trailing ``*``
+    so it keeps matching when the target logs the query string, and when that
+    tolerance is glued to the end of a name it is what stops the name from
+    being pinned. Read the tolerance for what it is for -- a query, not further
+    path components -- and the name is pinned again, so the rung is emitted as
+    the exact name plus the same name carrying a query. (A tolerance that
+    follows a separator is left alone: there the PoC did name something below
+    that directory and the wildcard stands for it.) A rung that pins nothing
+    even then is dropped; if no rung of a label survives, the operand is
+    anonymous and the caller drops it to a wildcard.
+    """
+    r = str(rung)
+    if not r.lstrip("*").startswith("/"):
+        return [r]                        # not a request path: not ours to judge
+    if _pins_a_name(r):
+        return [r]
+    if r.endswith("*") and len(r) > 1:
+        exact = r[:-1]
+        if exact and exact[-1] not in "/\\*" and _pins_a_name(exact):
+            return [exact, exact + "?*"]
+    return []
+
+
 def _discriminating(label):
     r"""True if a label names something concrete enough to anchor a detection.
 
@@ -241,11 +305,21 @@ def _discriminating(label):
     ``*.(executable)`` and ``*.*`` carry no discriminator (every host runs
     processes), so a template built only from them matches anything. A real
     process name (``winword.exe``, ``rar.exe``), file, or endpoint token counts.
+
+    A bare extension glob (``*.html*``) is refused for the same reason: it pins
+    no name, only a file FORMAT, and every host writes files of common formats,
+    so a template anchored on one alerts on unrelated products.
     """
     import re as _re
-    s = str(label).replace("(executable)", "").replace("executable", "")
-    core = _re.sub(r"[*/\\\s.():|;=?&-]", "", s)
-    return bool(_re.search(r"[A-Za-z0-9]{2,}", core))
+    for branch in (str(label).split("|") if "|" in str(label) else [str(label)]):
+        b = branch.strip()
+        if _re.fullmatch(r"\.[A-Za-z0-9]{1,6}", b.strip("*")):
+            continue                      # a format, not an artifact
+        s = b.replace("(executable)", "").replace("executable", "")
+        core = _re.sub(r"[*/\\\s.():|;=?&-]", "", s)
+        if _re.search(r"[A-Za-z0-9]{2,}", core):
+            return True
+    return False
 
 
 def _contentful(label):
@@ -569,6 +643,62 @@ def _fresh_wildcard():
     return w
 
 
+def _subject_node(output_graph, image):
+    """Process vertex for an operation the runtime performs inside a service.
+
+    Most operations are recorded under the process that issued them, so their
+    subject is the acting one. Some are not: a runtime hands the work to a
+    system service, and the collector attributes it to that service's image.
+    Pi names such an image in a record's ``subject`` field (collector-profile
+    knowledge, keyed on the OS, never on a CVE). The vertex is minted once per
+    image and shared by every record that names it.
+    """
+    import re as _re
+    nid = "proc_" + (_re.sub(r"[^A-Za-z0-9]+", "_", str(image)).strip("_").lower() or "subject")
+    if nid not in output_graph:
+        output_graph.add_node(nid, node_info=Node(nid, "Process", str(image)))
+    return nid
+
+
+def _attribute_assign_keys(target, function_mapping):
+    r"""Pi keys for an attribute assignment ``obj.Prop = value``.
+
+    An assignment can be an operation just as a call can: an automation object
+    model exposes behaviour through properties (``item.ReminderSoundFile =
+    r'\\host\share\x.wav'`` makes the client fetch that resource), and the
+    reader would otherwise see no call and lower nothing. Keys resolve exactly
+    the way call keys do -- the import-resolved dotted path when the receiver
+    resolves to a module, the bare attribute name when it is a value the reader
+    cannot resolve -- and end in ``=`` the way a call key ends in ``()``.
+    """
+    keys = []
+    try:
+        qualified = get_attribute_name(target, function_mapping)
+    except Exception:
+        qualified = None
+    if qualified:
+        keys.append(str(qualified) + "=")
+    bare = str(target.attr) + "="
+    if bare not in keys:
+        keys.append(bare)
+    return keys
+
+
+def handle_attribute_assign(target, value, function_mapping, variable_mapping,
+                            output_graph, base_process_node):
+    """Lower ``obj.Prop = value`` when Pi maps that property to operations."""
+    for key in _attribute_assign_keys(target, function_mapping):
+        if key not in syscalls:
+            continue
+        try:
+            operand = ast.unparse(
+                map_variables_and_remove_call_arguments(value, variable_mapping))
+        except Exception:
+            operand = "*"
+        handle_function(key, [operand], {}, output_graph, base_process_node)
+        return
+
+
 def _returns_to_assign(body, target):
     """Rewrite ``return <expr>`` into ``<target> = <expr>`` in an inlined body.
 
@@ -830,12 +960,31 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                             palt = "*/" + parent + "/*"
                             if palt not in alts:
                                 alts.append(palt)
+                        # The site root the product serves under. A capture
+                        # often records a different resource of the same
+                        # vulnerable surface than the one the PoC named -- the
+                        # WS_FTP PoC probes /AHT/AHT_UI/public/js/app.min.js as
+                        # a version check while the capture holds the exploited
+                        # /AHT/AhtApiService.asmx/AuthUser -- and this rung is
+                        # the only one that bridges them. It is the coarsest
+                        # rung emitted and the one that costs cross-CVE
+                        # precision, so it is bounded: a short or ordinary
+                        # first segment (see _GENERIC_SEG) never becomes one.
                         first = segs[0]
                         if len(first) >= 3 and first.lower() not in _GENERIC_SEG:
                             salt = "*/" + first + "/*"
                             if salt not in alts:
                                 alts.append(salt)
-                    path_label = " | ".join(alts)
+                    # Every rung, the PoC's own path included, has to pin a whole
+                    # name to be worth matching on; one generalized past that is
+                    # a cross-CVE false positive, not a tolerance.
+                    alts = [r for a in alts for r in _resource_rungs(a)]
+                    alts = list(dict.fromkeys(alts))
+                    if not alts:
+                        path = _fresh_wildcard()
+                        path_label = path
+                    else:
+                        path_label = " | ".join(alts)
                 client_id, host_id = "net_client", "proc_host"
                 if client_id not in output_graph:
                     output_graph.add_node(client_id, node_info=Node(client_id, "Socket", "*"))
@@ -859,7 +1008,15 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     # Offer the coarser endpoint forms an attacker-host graph may
                     # have recorded (service prefix, host:port) as | alternatives.
                     alts = _coarse_peer_alts(peer, url)
-                    peer_label = " | ".join(alts) if len(alts) > 1 else peer
+                    # Same floor as the target-side ladder: a rung that pins no
+                    # whole name is not an endpoint, it is a prefix.
+                    alts = [r for a in alts for r in _resource_rungs(a)]
+                    alts = list(dict.fromkeys(alts))
+                    if not alts:
+                        peer = _fresh_wildcard()
+                        peer_label = peer
+                    else:
+                        peer_label = " | ".join(alts) if len(alts) > 1 else alts[0]
                 output_graph.add_node(peer, node_info=Node(peer, "Socket", peer_label))
                 # Outbound only: the runner reaches the endpoint. A reverse edge
                 # would demand the endpoint reach back to the runner, which need
@@ -868,8 +1025,16 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 output_graph.add_edge(base_process_node, peer, syscall="connect")
             continue
 
+        # The subject a collector attributes this operation to: the acting
+        # process unless Pi names a service that performs it (see _subject_node).
+        subject = rec.get("subject")
+        acting = base_process_node if subject is None else _subject_node(output_graph, subject)
+
         # Everything below is runner/asset-side: only for a local-locus PoC.
-        if locus == "remote":
+        # A subject-bearing record is the exception -- it is not the runner's
+        # operation at all, so R* (which discards the runner's own side) leaves
+        # it standing under either locus.
+        if locus == "remote" and subject is None:
             continue
 
         # --- Process creation: spawn a child under the acting subject. ---
@@ -879,7 +1044,7 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
             child_id = f"child{star_index}"
             star_index += 1
             output_graph.add_node(child_id, node_info=Node(child_id, "Process", child_label))
-            output_graph.add_edge(base_process_node, child_id, syscall="create")
+            output_graph.add_edge(acting, child_id, syscall="create")
             continue
 
         # --- File I/O on the running host: one edge, read or write. ---
@@ -908,7 +1073,7 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 if " | " not in str(label):
                     label = _with_basename_alt(label)
             output_graph.add_node(fid, node_info=Node(fid, "File", label))
-            output_graph.add_edge(base_process_node, fid, syscall=verb)
+            output_graph.add_edge(acting, fid, syscall=verb)
             continue
 
         # --- Socket exchange: connect/send/receive to a network peer. ---
@@ -922,16 +1087,27 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
             else:
                 label = None
             if label is None or str(label).strip() in ("", "*"):
-                nid = _fresh_wildcard()
-                label = nid
+                if subject is None:
+                    nid = _fresh_wildcard()
+                    label = nid
+                else:
+                    # A service-mediated exchange: what the collector records is
+                    # the connection itself, under the service image, while the
+                    # peer is a run-time argument the PoC does not fix. Keep the
+                    # endpoint as a structural wildcard vertex -- the same reading
+                    # the target view gives its client/host pair -- rather than
+                    # discarding it as an anonymous operand and losing the edge.
+                    nid = f"net_peer{star_index}"
+                    star_index += 1
+                    label = "*"
             else:
                 nid = str(label)
             output_graph.add_node(nid, node_info=Node(nid, "Socket", label))
             cls = rec.get("class", "connect")
             if cls == "receive":
-                output_graph.add_edge(nid, base_process_node, syscall=cls)
+                output_graph.add_edge(nid, acting, syscall=cls)
             else:
-                output_graph.add_edge(base_process_node, nid, syscall=cls)
+                output_graph.add_edge(acting, nid, syscall=cls)
             continue
 
         # --- Generic object operation via the type map (chmod/rename/...). ---
@@ -951,9 +1127,9 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 target_id = str(label)
             output_graph.add_node(target_id, node_info=Node(target_id, object_type, label))
             if direction == "in":
-                output_graph.add_edge(target_id, base_process_node, syscall=syscall_name)
+                output_graph.add_edge(target_id, acting, syscall=syscall_name)
             else:
-                output_graph.add_edge(base_process_node, target_id, syscall=syscall_name)
+                output_graph.add_edge(acting, target_id, syscall=syscall_name)
             continue
 
         
@@ -1020,6 +1196,12 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                     variable_name = target.id
                     mapped_expression = map_variables_and_remove_call_arguments(node.value, variable_mapping)
                     variable_mapping[variable_name] = mapped_expression
+                elif isinstance(target, ast.Attribute):
+                    # ``obj.Prop = value``: an operation when Pi maps the
+                    # property, not merely a value binding.
+                    handle_attribute_assign(target, node.value, function_mapping,
+                                            variable_mapping, output_graph,
+                                            base_process_node)
                 elif isinstance(target, ast.Subscript):
                     base = target
                     while isinstance(base, ast.Subscript):
@@ -1061,6 +1243,10 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                 print("Unparse: ", ast.unparse(node))
                 exit(1)
         elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Attribute) and node.value is not None:
+                handle_attribute_assign(node.target, node.value, function_mapping,
+                                        variable_mapping, output_graph,
+                                        base_process_node)
             if isinstance(node.target, ast.Name):
                 variable_name = node.target.id
                 type = ast.parse(ast.unparse(node.annotation) + "()").body[0].value
@@ -1412,6 +1598,33 @@ def _split_local_anchors(output_graph):
     return [output_graph] + extra if extra else [output_graph]
 
 
+def _expand_components(parts):
+    """Each weakly-connected component is an independent template candidate.
+
+    A stage-2 graph is normally connected: every operation hangs off the acting
+    subject. It stops being connected as soon as a record names a service
+    subject (Pi's ``subject`` field) -- that operation belongs to the service,
+    not to the runner, and nothing ties the two together. Demanding both halves
+    at once over-constrains, exactly as demanding every request of a multi-request
+    remote PoC does, so the components are offered alongside the whole graph.
+    Returns the input unchanged when every graph is already connected.
+    """
+    out = []
+    for g in parts:
+        out.append(g)
+        try:
+            comps = list(nx.weakly_connected_components(g))
+        except Exception:
+            continue
+        if len(comps) <= 1:
+            continue
+        for nodes in comps:
+            H = g.subgraph(nodes).copy()
+            if H.number_of_edges():
+                out.append(H)
+    return out
+
+
 def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
     """Generate template graphs. out_format='txt' (stage-3 ready) or 'dot' (legacy pydot).
 
@@ -1460,6 +1673,7 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
             parts = _split_local_anchors(output_graph)
         else:
             parts = [output_graph]
+        parts = _expand_components(parts)
         for sub, g in enumerate(parts):
             if g.number_of_edges() == 0:
                 continue

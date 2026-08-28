@@ -1,12 +1,21 @@
 {
   "_schema": {
-    "_comment": "Pi: the operation map (paper Sec 4.1, App A.1). Each normalized API identifier maps to an ordered list of operation records. A record's 'kind' selects how the extractor lowers it; 'arg' is the argument index carrying the operand (the selector), 'class' the event class in Sigma_sigma. This is a measured/authored table, keyed on (OS, host collector, runtime, library version); it never names a CVE. Kinds: http (target-view request under R*), spawn (process creation), file (host file I/O, mode-derived read/write), net (socket exchange), generic (object op via the type map).",
+    "_comment": "Pi: the operation map (paper Sec 4.1, App A.1). Each normalized API identifier maps to an ordered list of operation records. A record's 'kind' selects how the extractor lowers it; 'arg' is the argument index carrying the operand (the selector), 'class' the event class in Sigma_sigma. This is a measured/authored table, keyed on (OS, host collector, runtime, library version); it never names a CVE. An identifier ending in '()' is a call; one ending in '=' is an attribute (property) assignment, whose assigned value is the operand in slot 0. Kinds: http (target-view request under R*), spawn (process creation), file (host file I/O, mode-derived read/write), net (socket exchange), generic (object op via the type map).",
     "_kinds": {
       "http": "arg is the URL/path; class is read (GET/HEAD) or write (POST/PUT/DELETE/PATCH) as the collector records it",
       "spawn": "arg is the command/executable; emits a child process vertex under the acting subject",
       "file": "arg is the path; mode_arg (if present) picks read vs write, else 'class'",
       "net": "arg is the destination; class is send/receive/connect",
       "generic": "arg is the operand; 'syscall' names the type-map entry giving object type and direction"
+    },
+    "_fields": {
+      "arg": "argument index carrying the operand",
+      "kwarg": "keyword name carrying the operand, when the call takes it by name",
+      "mode_arg": "argument index of an open()-style mode string (file kind)",
+      "method_arg": "argument index of an explicit HTTP method literal (http kind)",
+      "peer": "net kind: true when the operand names the peer endpoint, false when it is payload",
+      "reg": "file kind: the path is a registry key, recorded under its hive",
+      "subject": "image the collector records as PERFORMING this operation, when the runtime carries it out inside a service process rather than in the caller's own. Absent means the acting subject (the runner). Collector-profile knowledge, not CVE knowledge: e.g. on Windows a UNC/WebDAV resource is dereferenced by the network redirector (WebClient / LanmanWorkstation), hosted in svchost.exe, so the outbound connection is recorded under the service host and not under the process that named the path."
     }
   },
   "requests.get()": [
@@ -646,6 +655,92 @@
       "kind": "file",
       "class": "write",
       "kwarg": "pDriverContainer"
+    }
+  ],
+  "win32com.client.Dispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "win32com.client.DispatchEx()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "win32com.client.gencache.EnsureDispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "client.Dispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "client.DispatchEx()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "gencache.EnsureDispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "Dispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "DispatchEx()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "EnsureDispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "SaveAs()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "Send()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "peer": false
+    }
+  ],
+  "ReminderSoundFile=": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0,
+      "peer": true,
+      "subject": "svchost.exe"
+    }
+  ],
+  "Outlook.AppointmentItem.ReminderSoundFile=": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0,
+      "peer": true,
+      "subject": "svchost.exe"
     }
   ]
 }
