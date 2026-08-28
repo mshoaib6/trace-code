@@ -133,6 +133,52 @@ def _restrict(members: List[Path], manifest: Optional[dict], args) -> List[Path]
     return keep
 
 
+def _label_branches(G):
+    """Every concrete label branch a template family names."""
+    out = set()
+    for _, d in G.nodes(data=True):
+        for br in str(d.get("label", "")).split("|"):
+            b = br.strip()
+            core = b.strip("*")
+            if core and core not in {".", "/"} and "*" not in core:
+                out.add(core)
+    return out
+
+
+def shared_surfaces(family, sig_by_path):
+    """CVE pairs whose templates name a common request endpoint.
+
+    Two CVEs can be exploited through the same resource -- a bypass of an
+    earlier CVE reaches the endpoint the first one reached, and a later flaw in
+    the same handler is requested at the same path. When both PoCs request it,
+    a template for one matching the other's capture is a correct observation
+    about its own behaviour, not a confusion between unrelated products.
+
+    A pair counts when a concrete label branch of one is a path-suffix of a
+    branch of the other, so /api/v2/authorized/users pairs with
+    /mifs/aad/api/v2/authorized/users while unrelated endpoints do not.
+    """
+    labels = {cve: _label_branches_of(ms, sig_by_path) for cve, ms in family.items()}
+    pairs = set()
+    for a in labels:
+        for b in labels:
+            if a >= b:
+                continue
+            if any(x == y or x.endswith(y) or y.endswith(x)
+                   for x in labels[a] for y in labels[b]
+                   if len(x) > 6 and len(y) > 6 and "/" in x and "/" in y):
+                pairs.add((a, b))
+                pairs.add((b, a))
+    return pairs
+
+
+def _label_branches_of(members, sig_by_path):
+    out = set()
+    for mp in members:
+        out |= _label_branches(sig_by_path[mp])
+    return out
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -295,10 +341,16 @@ def run(args) -> None:
                 if hit is not None:
                     alerting += 1
                     offenders[cve].append((other, hit))
+        surfaces = shared_surfaces(family, sig_by_path)
+        same_surface = sum(1 for cve in offenders for other, _ in offenders[cve]
+                           if (cve, other) in surfaces)
         print(f"Cross-CVE false alerts (family rule): {alerting}/{considered}")
+        print(f"  of which the two CVEs name a common endpoint: {same_surface}")
+        print(f"Cross-PRODUCT false alerts: {alerting - same_surface}/{considered}")
         for cve in sorted(offenders):
             for other, member in offenders[cve]:
-                print(f"  {cve} -> prov-{other}  via {member}")
+                tag = "  [same endpoint]" if (cve, other) in surfaces else ""
+                print(f"  {cve} -> prov-{other}  via {member}{tag}")
 
     if args.out_csv:
         outp = Path(args.out_csv).expanduser().resolve()
