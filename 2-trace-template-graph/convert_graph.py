@@ -1078,6 +1078,37 @@ def _split_remote_anchors(output_graph):
     return graphs
 
 
+def _split_local_anchors(output_graph):
+    """The full local-locus graph plus one single-anchor template per distinctive
+    artifact.
+
+    A local PoC may perform several operations (write a payload, probe a URL,
+    trigger a fetch) of which the trace records only some. Keeping the whole
+    graph over-constrains, so besides it, emit a template for each distinctive
+    leaf file/net artifact (the acting process + that one artifact). Detection
+    holds if the full chain OR any single recorded artifact aligns.
+    """
+    extra = []
+    for n, data in list(output_graph.nodes(data=True)):
+        info = data.get("node_info")
+        if info is None or info.type not in ("File", "Socket"):
+            continue
+        if output_graph.out_degree(n) > 0 or not _contentful(info.label):
+            continue
+        preds = [u for u, _ in output_graph.in_edges(n)]
+        if not preds:
+            continue
+        H = nx.MultiDiGraph()
+        H.add_node(n, **output_graph.nodes[n])
+        for p in preds:
+            H.add_node(p, **output_graph.nodes[p])
+            for u, v, d in output_graph.edges(data=True):
+                if u == p and v == n:
+                    H.add_edge(u, v, **d)
+        extra.append(H)
+    return [output_graph] + extra if extra else [output_graph]
+
+
 def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
     """Generate template graphs. out_format='txt' (stage-3 ready) or 'dot' (legacy pydot).
 
@@ -1119,7 +1150,12 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         # A remote-locus graph with several recorded requests yields one template
         # per request (each an independent detection candidate); other graphs are
         # emitted whole.
-        parts = _split_remote_anchors(output_graph) if locus == "remote" else [output_graph]
+        if locus == "remote":
+            parts = _split_remote_anchors(output_graph)
+        elif locus == "local":
+            parts = _split_local_anchors(output_graph)
+        else:
+            parts = [output_graph]
         for sub, g in enumerate(parts):
             if g.number_of_edges() == 0:
                 continue
