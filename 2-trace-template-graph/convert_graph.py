@@ -202,6 +202,20 @@ def _value_wildcarded(label):
     return out if changed[0] else None
 
 
+def _discriminating(label):
+    r"""True if a label names something concrete enough to anchor a detection.
+
+    Stricter than _contentful: the structural process placeholders ``*``,
+    ``*.(executable)`` and ``*.*`` carry no discriminator (every host runs
+    processes), so a template built only from them matches anything. A real
+    process name (``winword.exe``, ``rar.exe``), file, or endpoint token counts.
+    """
+    import re as _re
+    s = str(label).replace("(executable)", "").replace("executable", "")
+    core = _re.sub(r"[*/\\\s.():|;=?&-]", "", s)
+    return bool(_re.search(r"[A-Za-z0-9]{2,}", core))
+
+
 def _contentful(label):
     r"""True if a label carries a concrete discriminator, not just wildcards.
 
@@ -1009,6 +1023,15 @@ def write_sig_txt(graph, out_path):
     seen = set()
     for nid, info in keep.items():
         id_map[nid] = _sig_id(info.id, seen)
+
+    # A template with no discriminating anchor -- only structural wildcards like
+    # a *.(executable) -> *.(executable) spawn -- matches any provenance with the
+    # same shape (every host spawns processes), so it is a universal false
+    # positive. Emit nothing unless some node carries a concrete label.
+    if not any(_discriminating(info.label) for info in keep.values()):
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write("")
+        return
 
     lines = []
     for nid, info in keep.items():
