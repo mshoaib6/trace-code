@@ -371,7 +371,14 @@ def _exe_name(raw):
     import re as _re
     lbl = _clean_label(raw)
     if lbl is None or str(lbl).strip() in ("", "*") or str(lbl).startswith("*"):
-        return "*.(executable)"
+        # A command line assembled from literals and variables ("curl ... " + host
+        # + ":" + port + "/_bulk") is not a single literal, but the part the PoC
+        # fixes still names the program. Fold it the same way a file operand is
+        # folded rather than discarding the whole operand.
+        folded = _fold_str(raw)
+        if folded is None or folded.strip("*") == "" or folded.startswith("*"):
+            return "*.(executable)"
+        lbl = folded
     full = _path_tolerance(str(lbl))
     # First token of the command line (honouring a quoted program path), reduced
     # to its basename -- the image name a process event carries.
