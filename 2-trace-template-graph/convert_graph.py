@@ -1013,7 +1013,12 @@ def write_sig_txt(graph, out_path):
     lines = []
     for nid, info in keep.items():
         t = _NODE_TYPE_TO_SIG.get(info.type, "file")
-        lines.append(f"NODE {id_map[nid]} {t} {info.label}")
+        # A label must stay on one line; collapse any embedded newline/CR/tab a
+        # multi-line string operand may have carried in.
+        label = str(info.label).replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
+        if not label:
+            label = "*"
+        lines.append(f"NODE {id_map[nid]} {t} {label}")
     for u, v, sc in normalized_edges:
         if u in id_map and v in id_map:
             lines.append(f"EDGE {id_map[u]} {id_map[v]} {sc}")
