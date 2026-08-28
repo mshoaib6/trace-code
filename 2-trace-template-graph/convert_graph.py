@@ -122,7 +122,9 @@ def _coarse_peer_alts(resource, url):
                 alts.append(coarse)
     folded = _fold_str(url) if url is not None else None
     if folded:
-        m = _re.search(r"://[^/*\s]*?:(\d{2,5})", folded)   # explicit service port
+        # Explicit service port, even when the host folded to a wildcard
+        # (http://*:9200/...): the port itself is the distinctive anchor.
+        m = _re.search(r"://[^/\s]*?:(\d{2,5})", folded)
         if m and m.group(1) not in ("80", "443", "8080", "8000"):
             port_alt = "*:" + m.group(1) + "*"
             if port_alt not in alts:

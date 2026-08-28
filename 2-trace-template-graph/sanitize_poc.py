@@ -99,16 +99,11 @@ def _extract_documented_url_path(source: str) -> str | None:
                       "tenable.com", "rapid7.com", "youtube.com", "linkedin.com")
         if any(h in host_lower for h in skip_hosts):
             continue
-        # Only a URL whose path actually looks like an exploit ENDPOINT is a
-        # usable anchor -- a disclosure/blog link (/application-security/cve-...)
-        # is documentation, not the request the trace records.
-        pl = path.lower().split("?", 1)[0]
-        endpointish = ("?" in path or "/api/" in pl or "/rest/" in pl
-                       or "/cgi-bin/" in pl or "=" in path
-                       or any(pl.endswith(e) or e + "/" in pl or e + "?" in path for e in
-                              (".php", ".jsp", ".jspx", ".asp", ".aspx", ".cfm", ".action",
-                               ".cgi", ".fcgi", ".do", ".asmx", ".ashx", ".pl", ".py", ".html")))
-        if not endpointish:
+        # A disclosure/blog link is documentation, not a request the trace
+        # records; its path reads like prose (hyphenated words, the CVE id).
+        pl = path.lower()
+        if any(k in pl for k in ("application-security", "/blog", "/advisor", "/research",
+                                 "/vulnerab", "/security/", "disclosure", "/cve-", "/news")):
             continue
         generic_host = any(tok in host_lower for tok in ("example.com", "target.example"))
         # Score: more path segments and longer path = more specific.
@@ -366,6 +361,20 @@ class _ExtractLiteralPath(ast.NodeTransformer):
                 return combined or None
             if isinstance(node.op, ast.Mod):
                 return self._extract_literal(node.left, _depth + 1)
+        if isinstance(node, ast.Call):
+            fn = _dotted_name(node.func)
+            leaf = fn.rsplit(".", 1)[-1] if fn else None
+            # urljoin(base, path) / os.path.join(base, path): the last arg is the
+            # distinctive path the trace records.
+            if leaf in ("urljoin", "join") and len(node.args) >= 2:
+                return self._extract_literal(node.args[-1], _depth + 1)
+            # "/path/{}".format(x): the format template carries the literal path.
+            if leaf == "format" and isinstance(node.func, ast.Attribute):
+                return self._extract_literal(node.func.value, _depth + 1)
+            # quote(x)/quote_plus(x)/unquote(x): URL-encoding is transparent to
+            # the discriminating tokens.
+            if leaf in ("quote", "quote_plus", "unquote", "urlencode") and node.args:
+                return self._extract_literal(node.args[0], _depth + 1)
         return None
 
     #: set by sanitize() before .visit() — URL path extracted from source comments/docstrings
@@ -374,6 +383,10 @@ class _ExtractLiteralPath(ast.NodeTransformer):
     #: so we can chase ``url = f'{host}/api/v1/foo'`` back when ``requests.get(url)``
     #: is called later.
     var_map: dict = None  # type: ignore
+
+    #: {dest: Constant} argparse defaults, so args.endpoint resolves to its
+    #: declared default literal.
+    argparse_defaults: dict = None  # type: ignore
 
     def _resolve(self, node: ast.AST, seen: Set[str] | None = None) -> ast.AST:
         """If node is a Name that maps to a known assigned expression, return
@@ -385,6 +398,11 @@ class _ExtractLiteralPath(ast.NodeTransformer):
                 return node
             seen.add(node.id)
             return self._resolve(self.var_map[node.id], seen)
+        # args.endpoint / options.path -> the argparse default literal.
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id in ("args", "options", "opts", "arguments", "config")
+                and self.argparse_defaults and node.attr in self.argparse_defaults):
+            return self.argparse_defaults[node.attr]
         return node
 
     def _rewrite_url_arg(self, arg: ast.AST) -> ast.AST:
@@ -693,6 +711,34 @@ class _NormalizePathlib(ast.NodeTransformer):
         return node
 
 
+def _collect_argparse_defaults(tree: ast.Module) -> dict:
+    """Map an argparse dest to its default string literal, so a PoC that reads
+    the endpoint from ``args.<dest>`` (default '/foo') still yields the anchor."""
+    out = {}
+    for n in ast.walk(tree):
+        if not (isinstance(n, ast.Call)):
+            continue
+        fn = _dotted_name(n.func)
+        if not fn or not fn.endswith("add_argument"):
+            continue
+        opt_names = [a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+        dest = None
+        default = None
+        for kw in n.keywords:
+            if kw.arg == "dest" and isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                dest = kw.value.value
+            if kw.arg == "default":
+                default = kw.value
+        if dest is None:
+            longs = [o for o in opt_names if o.startswith("--")]
+            base = (longs[0] if longs else (opt_names[0] if opt_names else None))
+            if base:
+                dest = base.lstrip("-").replace("-", "_")
+        if dest and isinstance(default, ast.Constant) and isinstance(default.value, str):
+            out[dest] = default
+    return out
+
+
 def _collect_session_vars(tree: ast.Module) -> Set[str]:
     """Names bound to a requests/httpx session object, so calls on them
     (``session.get(...)``) can be normalized to ``requests.<verb>``."""
@@ -716,6 +762,7 @@ def sanitize(source: str, relevant_keys: Set[str]) -> str:
     extractor = _ExtractLiteralPath()
     extractor.fallback_url = fallback
     extractor.var_map = _collect_var_map(tree)
+    extractor.argparse_defaults = _collect_argparse_defaults(tree)
     tree = extractor.visit(tree)
     # After extraction we may have N different extracted paths (one per
     # helper/phase). Stage 3 refinement is strictly injective, so if the
