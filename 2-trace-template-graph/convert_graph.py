@@ -178,6 +178,30 @@ def _merge_query(path, query):
     return path.rstrip("*") + "*" + query.lstrip("*")
 
 
+def _value_wildcarded(label):
+    r"""A twin of a resource label with volatile query VALUES wildcarded.
+
+    A parameter's name is the discriminator; its value may be a per-exploit
+    artifact the trace records differently (``PHPRC=/dev/fd/0`` in the PoC vs
+    ``PHPRC=/var/tmp/evilfileof.ini`` in the log). Wildcard a value that looks
+    volatile -- a path (contains ``/``) or a long token -- while keeping a short
+    fixed token (``setupComplete=0``) that is itself discriminating. Returns the
+    wildcarded label, or None if nothing changed.
+    """
+    import re as _re
+    changed = [False]
+
+    def repl(m):
+        v = m.group(1)
+        if v and v != "*" and ("/" in v or len(v) >= 8):
+            changed[0] = True
+            return "=*"
+        return m.group(0)
+
+    out = _re.sub(r"=([^&*\s]+)", repl, str(label))
+    return out if changed[0] else None
+
+
 def _contentful(label):
     r"""True if a label carries a concrete discriminator, not just wildcards.
 
@@ -550,13 +574,18 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     # No concrete resource token: an anonymous operand, dropped.
                     path = _fresh_wildcard()
                     path_label = path
-                elif query is not None and base is not None and base != path:
-                    # The query may be the discriminator (rest_route=...) or absent
-                    # from the trace (a webshell logged only by its path). Offer the
-                    # path-only form as a | alternative so both records align.
-                    path_label = path + " | " + base
                 else:
-                    path_label = path
+                    # Offer, as | alternatives, forms the trace may have recorded:
+                    # the full path+query, the path alone (query the log omitted,
+                    # e.g. a webshell), and a value-wildcarded query (a volatile
+                    # injected value the log recorded differently).
+                    alts = [path]
+                    if query is not None and base is not None and base != path:
+                        alts.append(base)
+                    vw = _value_wildcarded(path)
+                    if vw and vw not in alts:
+                        alts.append(vw)
+                    path_label = " | ".join(alts)
                 client_id, host_id = "net_client", "proc_host"
                 if client_id not in output_graph:
                     output_graph.add_node(client_id, node_info=Node(client_id, "Socket", "*"))
