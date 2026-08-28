@@ -241,6 +241,33 @@ def _operand_label(raw):
     return out if out.endswith("*") else out + "*"
 
 
+def _with_basename_alt(label):
+    r"""Offer a file label's basename as a ``|`` alternative.
+
+    A host collector may record a file by its full path (``C:\Temp\x.dll``) or by
+    a basename the analyst normalized to (``x.dll``); the PoC fixes only one form.
+    When the label carries a path, add ``*basename*`` as an alternative so either
+    recorded form aligns. Only for a distinctive basename (a dotted extension, or
+    a long token) to avoid matching on a generic component. Returns the label
+    unchanged when it has no path separator or no distinctive basename.
+    """
+    import re as _re
+    core = str(label).strip("*")
+    parts = _re.split(r"[\\/]", core)
+    if len(parts) < 2:
+        return label
+    base = parts[-1].strip()
+    if not base:
+        return label
+    distinctive = ("." in base and len(base) >= 4) or len(base) >= 8
+    if not distinctive:
+        return label
+    alt = "*" + base + "*"
+    if alt == label or alt.strip("*") == core:
+        return label
+    return str(label) + " | " + alt
+
+
 def _fold_str(raw):
     r"""Fold a string-valued expression into a partially-concrete label.
 
@@ -591,6 +618,7 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 label = fid
             else:
                 fid = str(label)
+                label = _with_basename_alt(label)
             output_graph.add_node(fid, node_info=Node(fid, "File", label))
             output_graph.add_edge(base_process_node, fid, syscall=verb)
             continue
