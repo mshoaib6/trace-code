@@ -657,6 +657,28 @@ _SESSION_FACTORIES = ("requests.session", "requests.Session", "httpx.Client",
                       "httpx.AsyncClient", "aiohttp.ClientSession")
 
 
+class _NormalizePathlib(ast.NodeTransformer):
+    """Rewrite pathlib file I/O to the ``open(path, mode)`` form stage 2 keys on.
+
+    ``p.write_bytes(d)`` / ``p.write_text(d)`` / ``p.read_bytes()`` /
+    ``p.read_text()`` name the file by the receiver ``p``; stage 2 recognises
+    ``open(p, mode)`` where the path is the first argument. Rewrite so the file
+    operand is visible."""
+
+    _MODE = {"write_bytes": "wb", "write_text": "w", "read_bytes": "rb", "read_text": "r"}
+
+    def visit_Call(self, node: ast.Call) -> ast.AST:
+        self.generic_visit(node)
+        f = node.func
+        if isinstance(f, ast.Attribute) and f.attr in self._MODE and not isinstance(f.value, ast.Attribute):
+            return ast.copy_location(
+                ast.Call(func=ast.Name(id="open", ctx=ast.Load()),
+                         args=[f.value, ast.Constant(value=self._MODE[f.attr])],
+                         keywords=[]),
+                node)
+        return node
+
+
 def _collect_session_vars(tree: ast.Module) -> Set[str]:
     """Names bound to a requests/httpx session object, so calls on them
     (``session.get(...)``) can be normalized to ``requests.<verb>``."""
@@ -674,6 +696,7 @@ def _collect_session_vars(tree: ast.Module) -> Set[str]:
 
 def sanitize(source: str, relevant_keys: Set[str]) -> str:
     tree = ast.parse(source)
+    tree = _NormalizePathlib().visit(tree)
     tree = _NormalizeHttpWrappers(_collect_session_vars(tree)).visit(tree)
     fallback = _extract_documented_url_path(source)
     extractor = _ExtractLiteralPath()
