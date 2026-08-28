@@ -1,6 +1,21 @@
 # STATUS — handoff
 
-Working notes for whoever picks this up next. Branch: `pi-impacket-1675`.
+Working notes for whoever picks this up next.
+
+## This work is on a branch, not on `main`
+
+Everything below lives on **`pi-impacket-1675`**, which has not been merged into
+`main`. A plain `git clone` checks out `main` and will not show any of it, though
+the branch is fetched and present. To get it:
+
+```bash
+git clone git@github.com:mshoaib6/trace-code.git
+cd trace-code
+git checkout pi-impacket-1675
+```
+
+`main` is untouched and still holds the pre-session state. Merging is a pending
+decision, not an oversight.
 
 ## Where things stand
 
