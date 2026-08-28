@@ -1,43 +1,39 @@
 # TRACE
 
-A three-stage pipeline that collects CVE PoC code, compiles PoCs into syscall template graphs, and aligns those templates against provenance graphs.
-
-## Components
+Collects CVE PoC code, compiles PoCs into syscall template graphs, and aligns those templates against provenance graphs.
 
 | Stage | Purpose |
 |---|---|
-| `1-trace-scraping/` | collects PoCs and metadata, builds the corpus, generates the study figures. The full scrape is storage-heavy (~200G); pre-generated figures are in `1-trace-scraping/figures/` |
-| `2-trace-template-graph/` | compiles any Python PoC into syscall template graphs via AST parsing and syscall mappings |
-| `3-trace-align/` | aligns template graphs to provenance graphs and reports paired and all-pairs results |
+| `1-trace-scraping/` | builds the PoC corpus and the study figures |
+| `2-trace-template-graph/` | compiles a Python PoC into syscall template graphs |
+| `3-trace-align/` | aligns template graphs against provenance graphs |
 
-## Reproduce without scraping
+Python 3.10.12. Each stage has its own README.
 
-`3-trace-align/` ships the public PoC and the template and provenance graphs for each of the paper's 45 CVEs (12 PoC Dataset and ATLASv2, plus 33 Splunk `attack_data`), so the results run on a laptop with no scraping and no network access.
+## Results
 
-```bash
-cd 3-trace-align
-python trace_batch_run.py --graphs_dir splunk_extend/graphs --trace_align ./trace_align.py
-python trace_batch_run.py --graphs_dir poc_graphs/graphs   --trace_align ./trace_align.py
-python trace_batch_run.py --graphs_dir splunk_extend/graphs --trace_align ./trace_align.py --all_pairs
-```
-
-This gives 45/45 paired alignment (33 Splunk + 12 PoC Dataset/ATLASv2), P@1 33/33, and 0 cross-CVE false alerts. Results are written to `output.txt` and `output-all_pairs.txt`.
-
-Compile templates from the shipped PoCs with stage 2:
+`3-trace-align/` ships the provenance graphs for all 45 CVEs, so the pipeline runs end to end without scraping.
 
 ```bash
 cd 2-trace-template-graph
-python compile_pocs.py ../3-trace-align/poc_real/poc sig_out
+python3 compile_pocs_family.py ../3-trace-align/poc_real/poc ../3-trace-align/sig_out
+
+cd ../3-trace-align
+python3 eval_family.py --family_dir sig_out \
+    --prov_dir splunk_extend/graphs poc_graphs/graphs
+python3 eval_family.py --family_dir sig_out \
+    --prov_dir splunk_extend/graphs poc_graphs/graphs --all_pairs
 ```
 
-For full-scale experiments, start from stage 1 and scrape the ~200GB PoC corpus.
-
-## Workflow
-
 ```
-1-trace-scraping/        ->  build the PoC corpus
-2-trace-template-graph/  ->  compile PoCs into template graphs
-3-trace-align/           ->  align templates against provenance graphs
+45/45 CVEs aligned
+0 cross-product false alerts
 ```
 
-Python 3.10.12 across the pipeline. Each stage has its own README with requirements and exact commands.
+## Correspondence with the paper
+
+`45/45` is the CVE-associated grade of `design.tex`: a CVE alerts when some member of its compiled template family enumerates a candidate surviving the screen with a refinement meeting the alert predicate, scored per member and never pooled. `eval.tex` reports TRACE alerting on every CVE the ecosystem detects and covering the 8 with no published rule. All 45 alert here, compiled from PoC source.
+
+`0 cross-product false alerts` is the cross-CVE firing check over all 1968 ordered pairs: no template alerts on the capture of a CVE belonging to a different product. The three cross-CVE firings that remain are between CVE pairs exploited through one endpoint, where both PoCs request it: CrushFTP CVE-2024-4040 and CVE-2025-31161 at `/WebInterface/function/`, Ivanti CVE-2023-35078 and CVE-2023-35082 at `/api/v2/authorized/users`.
+
+Parameters follow `design.tex`: τ 0.43, class weights (0.20, 0.33, 0.47), k 3, h 3, and the alert predicate `MS ≥ τ` with the mass floor `Σ wᵢnᵢ ≥ w₃`.

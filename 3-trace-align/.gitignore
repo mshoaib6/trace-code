@@ -8,3 +8,4 @@ output-*.txt
 splunk_extend/results-*.txt
 eval_family*.txt
 eval_family*.csv
+sig_out/
