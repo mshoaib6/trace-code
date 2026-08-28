@@ -73,6 +73,14 @@ def _wildcard_to_regex(pattern: str) -> re.Pattern:
     return re.compile(rf"^{esc}$")
 
 
+def _slash_norm(s: str) -> str:
+    r"""Normalize path-separator direction. A Windows collector records a file
+    as ``C:\dir\name.aspx`` while a PoC may name the same object with forward
+    slashes (or as an HTTP resource ``/name.aspx``); the separator is a platform
+    convention, not part of the object's identity, so match either form."""
+    return s.replace("\\", "/")
+
+
 def label_matches(sig_label: str, prov_label: str) -> bool:
     s = (sig_label or "").strip()
     p = (prov_label or "").strip()
@@ -86,5 +94,6 @@ def label_matches(sig_label: str, prov_label: str) -> bool:
     if "(executable)" in s or s.lower().endswith(".executable") or s.lower().endswith("*.executable"):
         return True
     if "*" in s:
-        return bool(_wildcard_to_regex(s).match(p))
-    return s == p
+        rx = _wildcard_to_regex(s)
+        return bool(rx.match(p)) or bool(_wildcard_to_regex(_slash_norm(s)).match(_slash_norm(p)))
+    return s == p or _slash_norm(s) == _slash_norm(p)

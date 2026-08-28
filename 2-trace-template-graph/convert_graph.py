@@ -87,6 +87,49 @@ def _http_endpoint_label(raw):
     return _http_resource_label(raw)
 
 
+# Path segments too generic to serve as a coarse endpoint anchor on their own:
+# an attacker-host graph names the peer by the service, not a common route word.
+_GENERIC_SEG = {
+    "api", "v1", "v2", "v3", "admin", "login", "logout", "index", "home",
+    "user", "users", "app", "apps", "web", "cgi", "rest", "public", "static",
+    "cgi-bin", "servlet", "action", "do", "php", "asp", "aspx", "jsp", "html",
+}
+
+
+def _coarse_peer_alts(resource, url):
+    r"""Alternative endpoint labels an attacker-host graph may have recorded.
+
+    A local-locus request logs on the runner as an outbound *connection*, and
+    such a graph names the peer by the reachable endpoint -- which may be the
+    full request path (``/bonita/API/pageUpload``), just the distinctive service
+    prefix (``/bonita``, as ``http://host:8080/bonita``), or the ``host:port``
+    when a service port is distinctive (``127.0.0.1:9200``). The exact form is a
+    collector convention the PoC does not fix, so the peer label offers each as
+    a ``|`` alternative (which only loosens this one node; structure still binds).
+    Returns a list beginning with the full resource label.
+    """
+    import re as _re
+    alts = [resource] if resource else []
+    if resource:
+        core = resource.strip("*")
+        prefix = core.split("*", 1)[0]              # literal path before any query merge
+        segs = [s for s in prefix.split("/") if s]
+        if segs:
+            first = segs[0]
+            coarse = "*/" + first + "*"
+            if (coarse not in alts and len(first) >= 4
+                    and first.lower() not in _GENERIC_SEG):
+                alts.append(coarse)
+    folded = _fold_str(url) if url is not None else None
+    if folded:
+        m = _re.search(r"://[^/*\s]*?:(\d{2,5})", folded)   # explicit service port
+        if m and m.group(1) not in ("80", "443", "8080", "8000"):
+            port_alt = "*:" + m.group(1) + "*"
+            if port_alt not in alts:
+                alts.append(port_alt)
+    return alts
+
+
 def _query_body_anchor(kwargs):
     r"""Concrete QUERY parameters a request carries, as ``name=value`` tokens
     joined by wildcards.
@@ -133,6 +176,24 @@ def _merge_query(path, query):
     if path is None:
         return query
     return path.rstrip("*") + "*" + query.lstrip("*")
+
+
+def _contentful(label):
+    r"""True if a label carries a concrete discriminator, not just wildcards.
+
+    A URL the reader could only abstract to ``*/*`` (its path built from an
+    unresolved variable) names no particular resource: it matches every recorded
+    request, so as an anchor it is a universal false-positive. Such a label is
+    treated as an anonymous operand -- structure without a discriminator -- and
+    per the paper does not become an anchored operation. Contentful means at
+    least one alphanumeric run of length >= 2 survives once wildcards and path
+    separators are removed.
+    """
+    import re as _re
+    if label is None:
+        return False
+    core = _re.sub(r"[*/\\\s.]", "", str(label))
+    return bool(_re.search(r"[A-Za-z0-9]{2,}", core))
 
 
 def _is_rooted_path(s):
@@ -453,20 +514,29 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     verb = _http_class_from_method(_arg_at(args, rec["method_arg"]) or kwargs.get("method"))
                 else:
                     verb = rec.get("class", "write")
-                path = _http_resource_label(url) if url is not None else None
+                base = _http_resource_label(url) if url is not None else None
                 # A collector logs the whole request line, so query/body params
                 # (params=, data=, json=) are part of the resource the target
                 # records -- often where the discriminating anchor lives.
-                path = _merge_query(path, query)
-                if path is None:
+                path = _merge_query(base, query)
+                if not _contentful(path):
+                    # No concrete resource token: an anonymous operand, dropped.
                     path = _fresh_wildcard()
+                    path_label = path
+                elif query is not None and base is not None and base != path:
+                    # The query may be the discriminator (rest_route=...) or absent
+                    # from the trace (a webshell logged only by its path). Offer the
+                    # path-only form as a | alternative so both records align.
+                    path_label = path + " | " + base
+                else:
+                    path_label = path
                 client_id, host_id = "net_client", "proc_host"
                 if client_id not in output_graph:
                     output_graph.add_node(client_id, node_info=Node(client_id, "Socket", "*"))
                 if host_id not in output_graph:
                     output_graph.add_node(host_id, node_info=Node(host_id, "Process", "*"))
                     output_graph.add_edge(client_id, host_id, syscall="access")
-                output_graph.add_node(path, node_info=Node(path, "File", path))
+                output_graph.add_node(path, node_info=Node(path, "File", path_label))
                 output_graph.add_edge(host_id, path, syscall=verb)
             else:
                 # Local locus: the request is a transmission the runner emits
@@ -476,9 +546,15 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 # connection between the runner and the endpoint.
                 peer = _http_endpoint_label(url) if url is not None else None
                 peer = _merge_query(peer, query)
-                if peer is None:
+                if not _contentful(peer):
                     peer = _fresh_wildcard()
-                output_graph.add_node(peer, node_info=Node(peer, "Socket", peer))
+                    peer_label = peer
+                else:
+                    # Offer the coarser endpoint forms an attacker-host graph may
+                    # have recorded (service prefix, host:port) as | alternatives.
+                    alts = _coarse_peer_alts(peer, url)
+                    peer_label = " | ".join(alts) if len(alts) > 1 else peer
+                output_graph.add_node(peer, node_info=Node(peer, "Socket", peer_label))
                 # Outbound only: the runner reaches the endpoint. A reverse edge
                 # would demand the endpoint reach back to the runner, which need
                 # not hold when the actual connector is a descendant process the
@@ -909,6 +985,37 @@ def _detect_locus(tree):
     return "local"
 
 
+def _split_remote_anchors(output_graph):
+    """One template per recorded request, for a remote-locus graph.
+
+    A remote-locus PoC that issues several requests attaches each as a resource
+    the target reads/writes off the shared ``net_client -> proc_host`` pair. The
+    trace records only the requests that actually reached the vulnerable service,
+    so a single template demanding *all* of them over-constrains (a pre-flight
+    check the log missed blocks the whole alignment). Each request is an
+    independent exploit-template candidate, so emit the client/host pair plus one
+    resource at a time; detection holds if any single recorded request aligns.
+    Returns a list of graphs (the input unchanged when it has 0/1 resources).
+    """
+    client_id, host_id = "net_client", "proc_host"
+    if client_id not in output_graph or host_id not in output_graph:
+        return [output_graph]
+    resources = [v for _, v in output_graph.out_edges(host_id) if v != host_id]
+    resources = list(dict.fromkeys(resources))
+    if len(resources) <= 1:
+        return [output_graph]
+    graphs = []
+    for res in resources:
+        H = nx.MultiDiGraph()
+        for nid in (client_id, host_id, res):
+            H.add_node(nid, **output_graph.nodes[nid])
+        for u, v, data in output_graph.edges(data=True):
+            if u in H and v in H:
+                H.add_edge(u, v, **data)
+        graphs.append(H)
+    return graphs
+
+
 def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
     """Generate template graphs. out_format='txt' (stage-3 ready) or 'dot' (legacy pydot).
 
@@ -947,17 +1054,25 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         if output_graph.number_of_edges() == 0:
             continue
 
-        # In-run dedupe by canonical signature (labels + syscall-labeled edges).
-        sig_key = _canonical_graph_signature(output_graph)
-        if sig_key in seen_signatures:
-            continue
-        seen_signatures.add(sig_key)
+        # A remote-locus graph with several recorded requests yields one template
+        # per request (each an independent detection candidate); other graphs are
+        # emitted whole.
+        parts = _split_remote_anchors(output_graph) if locus == "remote" else [output_graph]
+        for sub, g in enumerate(parts):
+            if g.number_of_edges() == 0:
+                continue
+            # In-run dedupe by canonical signature (labels + syscall-labeled edges).
+            sig_key = _canonical_graph_signature(g)
+            if sig_key in seen_signatures:
+                continue
+            seen_signatures.add(sig_key)
 
-        if out_format == "txt":
-            write_sig_txt(output_graph, f'graphs/graph-{idx}.txt')
-        else:
-            nx.drawing.nx_pydot.write_dot(output_graph, f'graphs/graph-{idx}.dot')
-        written += 1
+            suffix = f"-{sub}" if len(parts) > 1 else ""
+            if out_format == "txt":
+                write_sig_txt(g, f'graphs/graph-{idx}{suffix}.txt')
+            else:
+                nx.drawing.nx_pydot.write_dot(g, f'graphs/graph-{idx}{suffix}.dot')
+            written += 1
     return written
 # def main():
 #     convert_graph("examples/follina.py", "examples")
