@@ -93,8 +93,22 @@ def _extract_documented_url_path(source: str) -> str | None:
         host_lower = host.lower()
         skip_hosts = ("github.com", "raw.githubusercontent.com", "gitlab.com",
                       "bitbucket.org", "stackoverflow.com", "twitter.com",
-                      "x.com", "medium.com")
+                      "x.com", "medium.com", "rhinosecuritylabs.com",
+                      "nvd.nist.gov", "cve.org", "mitre.org", "exploit-db.com",
+                      "packetstormsecurity.com", "snyk.io", "cvefeed.io",
+                      "tenable.com", "rapid7.com", "youtube.com", "linkedin.com")
         if any(h in host_lower for h in skip_hosts):
+            continue
+        # Only a URL whose path actually looks like an exploit ENDPOINT is a
+        # usable anchor -- a disclosure/blog link (/application-security/cve-...)
+        # is documentation, not the request the trace records.
+        pl = path.lower().split("?", 1)[0]
+        endpointish = ("?" in path or "/api/" in pl or "/rest/" in pl
+                       or "/cgi-bin/" in pl or "=" in path
+                       or any(pl.endswith(e) or e + "/" in pl or e + "?" in path for e in
+                              (".php", ".jsp", ".jspx", ".asp", ".aspx", ".cfm", ".action",
+                               ".cgi", ".fcgi", ".do", ".asmx", ".ashx", ".pl", ".py", ".html")))
+        if not endpointish:
             continue
         generic_host = any(tok in host_lower for tok in ("example.com", "target.example"))
         # Score: more path segments and longer path = more specific.
