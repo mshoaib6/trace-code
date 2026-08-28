@@ -618,6 +618,11 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 label = fid
             else:
                 fid = str(label)
+                if rec.get("reg") and not str(label).startswith("*"):
+                    # A registry write is recorded under its hive (HKLM\...); the
+                    # winreg subkey the PoC names omits that prefix, so anchor it
+                    # with a leading wildcard.
+                    label = "*" + str(label)
                 label = _with_basename_alt(label)
             output_graph.add_node(fid, node_info=Node(fid, "File", label))
             output_graph.add_edge(base_process_node, fid, syscall=verb)
