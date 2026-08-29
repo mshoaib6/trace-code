@@ -40,14 +40,3 @@ The pretrained partial-order encoder is provided for testing.
 45/45 is the CVE-associated grade. A CVE counts when any member of its compiled template family meets the alert predicate. Scores are per member, never pooled.
 
 0 cross-product false alerts covers all 1968 ordered pairs of the 45 captures. No template alerts on another product's capture.
-
-| | |
-|---|---|
-| tau | 0.43 |
-| class weights | 0.20, 0.33, 0.47 |
-| k | 3 |
-| h | 3 |
-| alert predicate | MS >= tau and sum(w_i n_i) >= w_3 |
-| Pi | 365 keys, 312 normalized identifiers |
-| collector profiles | 6 |
-| normalization profiles | 7 |
