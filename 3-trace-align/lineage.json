@@ -9,9 +9,7 @@
     "",
     "A lineage component groups PoCs related by fork or commit ancestry, by mutual",
     "attribution, or by an identical canonical serialisation of the backward slice.",
-    "Computing it needs several PoCs per CVE. This repository carries one PoC per",
-    "CVE, so no anchor here reaches two components and the table is empty: every",
-    "concrete anchor classifies C2. Populating it requires the multi-PoC corpus,",
-    "which is not part of this repository."
+    "Entries are keyed by anchor label and list the components it appeared in,",
+    "computed over a PoC corpus by trace_align_score.MIN_LINEAGES."
   ]
 }

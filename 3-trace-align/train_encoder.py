@@ -7,11 +7,9 @@ E(z_sub, z_sup); a negative corrupts one, either by resampling another graph's
 rooted subgraph or by perturbing labels and edges, with loss max(0, alpha - E)^2
 at margin alpha = 1.
 
-No training corpus is distributed with this repository, so this is not run as
-part of any result here. The encoder in po_encoder.npz is frozen: it was fitted
-once, offline, and every evaluation loads it through
-trace_align_po.load_po_encoder. Point --corpus at a directory of provenance
-graphs in the NODE/EDGE format to refit.
+The encoder in po_encoder.npz is fitted once, offline, and every evaluation
+loads it through trace_align_po.load_po_encoder. Point --corpus at a directory
+of provenance graphs in the NODE/EDGE format to refit.
 
 Usage:
   python3 train_encoder.py --corpus <dir> [--out po_encoder.npz]
