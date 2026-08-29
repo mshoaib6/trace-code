@@ -1,0 +1,80 @@
+{
+  "_schema": {
+    "_comment": "Collector join specifications. One profile per collector, giving the fields a record format exposes and how records join into provenance operations. A profile is per PRODUCT of the collector, never per CVE: it encodes what a log format records, not what any exploit looks like. Reused unchanged across every CVE.",
+    "_fields": {
+      "format": "the on-disk record format the collector emits",
+      "selects": "record selector: the field/value test admitting a record to this profile",
+      "subject": "field naming the process the collector attributes the operation to",
+      "object": "field naming the entity operated on",
+      "peer": "field naming the remote endpoint of an exchange, when the record has one",
+      "class": "how the record's event class in Sigma_sigma is derived",
+      "join": "how separate records correlate into one operation, when the format splits them",
+      "normalization": "the URL/path normalization profile this collector's labels compare under"
+    }
+  },
+
+  "sysmon-process": {
+    "format": "Windows Sysmon XML/EVTX, rendered as key=value by the forwarder",
+    "selects": "EventID in (1, 5, 11, 12, 13, 23)",
+    "subject": "Image",
+    "object": "TargetFilename for file events, TargetObject for registry events, Image for process creation",
+    "class": "EventID 1 -> create; 11 -> write; 23 -> write; 12/13 -> write (registry); 5 -> close",
+    "join": "ProcessGuid links a child record to its parent through ParentProcessGuid, giving the creating subject",
+    "normalization": "windows-path"
+  },
+
+  "sysmon-network": {
+    "format": "Windows Sysmon XML/EVTX, rendered as key=value by the forwarder",
+    "selects": "EventID in (3, 22)",
+    "subject": "Image",
+    "object": "QueryName for DNS records, DestinationHostname otherwise",
+    "peer": "DestinationIp with DestinationPort",
+    "class": "EventID 3 -> connect; 22 -> resolve",
+    "join": "ProcessGuid attributes the exchange to the process the process-profile recorded",
+    "normalization": "rfc3986"
+  },
+
+  "suricata-http": {
+    "format": "Suricata eve.json",
+    "selects": "event_type == \"http\"",
+    "subject": "the server side of the flow, named by http.hostname when present, else dest_ip",
+    "object": "http.url",
+    "peer": "src_ip with src_port",
+    "class": "http.http_method GET/HEAD -> read; POST/PUT/PATCH/DELETE -> write",
+    "join": "flow_id groups a request with its response and with the flow record carrying the endpoints",
+    "normalization": "rfc3986"
+  },
+
+  "nginx-access": {
+    "format": "nginx combined access log",
+    "selects": "every access-log line",
+    "subject": "the serving host, from the server_name field or the log's own host tag",
+    "object": "the path of the request line",
+    "peer": "remote_addr",
+    "class": "request method GET/HEAD -> read; POST/PUT/PATCH/DELETE -> write",
+    "join": "one line is one complete operation; no join needed",
+    "normalization": "nginx"
+  },
+
+  "paloalto-traffic": {
+    "format": "PAN-OS TRAFFIC and THREAT syslog, comma-separated",
+    "selects": "type in (TRAFFIC, THREAT)",
+    "subject": "the destination host, from dst",
+    "object": "misc, which carries the URI for THREAT url-filtering records",
+    "peer": "src with sport",
+    "class": "THREAT url records -> read; TRAFFIC session records -> connect",
+    "join": "session id links a THREAT record to the TRAFFIC session that carried it",
+    "normalization": "rfc3986"
+  },
+
+  "crushftp-session": {
+    "format": "CrushFTP session log",
+    "selects": "lines carrying a session identifier and a command verb",
+    "subject": "the service process recorded by the application, not the OS image",
+    "object": "the path or resource the command names",
+    "peer": "the client address the session opened with",
+    "class": "download/read verbs -> read; upload/zip/write verbs -> write",
+    "join": "the session identifier carries the client endpoint from the session-open line onto every later command line",
+    "normalization": "rfc3986"
+  }
+}
