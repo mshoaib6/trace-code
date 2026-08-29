@@ -1,0 +1,100 @@
+{
+  "_schema": {
+    "_comment": "URL/path normalization profiles, one per parser family. Names and values compare under the profile the collector's product parses with. A profile is per parser FAMILY, not per product and never per CVE: it records how that parser resolves a request path before the application sees it, which is what decides whether two recorded labels denote one resource.",
+    "_fields": {
+      "applies_to": "the parser family this profile describes",
+      "case_sensitive": "false when the parser folds case before matching",
+      "separators": "characters the parser accepts as a path separator",
+      "percent_decode": "decode %XX before comparison",
+      "unicode_escape": "decode the non-standard %uXXXX form before comparison",
+      "strip_path_params": "drop ;name=value parameters from each segment",
+      "remove_dot_segments": "resolve . and .. against the path, per RFC 3986 section 5.2.4",
+      "collapse_slashes": "fold repeated separators into one",
+      "trim_trailing": "characters trimmed from the end of a segment before comparison"
+    }
+  },
+
+  "rfc3986": {
+    "applies_to": "generic URI parsing, the default where the product's parser is not distinguished",
+    "case_sensitive": true,
+    "separators": ["/"],
+    "percent_decode": true,
+    "unicode_escape": false,
+    "strip_path_params": false,
+    "remove_dot_segments": true,
+    "collapse_slashes": false,
+    "trim_trailing": ""
+  },
+
+  "nginx": {
+    "applies_to": "nginx location matching",
+    "case_sensitive": true,
+    "separators": ["/"],
+    "percent_decode": true,
+    "unicode_escape": false,
+    "strip_path_params": false,
+    "remove_dot_segments": true,
+    "collapse_slashes": true,
+    "trim_trailing": ""
+  },
+
+  "apache": {
+    "applies_to": "Apache httpd request mapping",
+    "case_sensitive": true,
+    "separators": ["/"],
+    "percent_decode": true,
+    "unicode_escape": false,
+    "strip_path_params": false,
+    "remove_dot_segments": true,
+    "collapse_slashes": true,
+    "trim_trailing": ""
+  },
+
+  "tomcat": {
+    "applies_to": "Tomcat and the servlet containers that follow it, where a path parameter may follow any segment",
+    "case_sensitive": true,
+    "separators": ["/"],
+    "percent_decode": true,
+    "unicode_escape": false,
+    "strip_path_params": true,
+    "remove_dot_segments": true,
+    "collapse_slashes": false,
+    "trim_trailing": ""
+  },
+
+  "iis": {
+    "applies_to": "IIS request parsing",
+    "case_sensitive": false,
+    "separators": ["/", "\\"],
+    "percent_decode": true,
+    "unicode_escape": true,
+    "strip_path_params": false,
+    "remove_dot_segments": true,
+    "collapse_slashes": false,
+    "trim_trailing": ". "
+  },
+
+  "aspnet": {
+    "applies_to": "ASP.NET routing above IIS, which resolves an encoded separator before routing",
+    "case_sensitive": false,
+    "separators": ["/", "\\"],
+    "percent_decode": true,
+    "unicode_escape": true,
+    "strip_path_params": false,
+    "remove_dot_segments": true,
+    "collapse_slashes": false,
+    "trim_trailing": ". "
+  },
+
+  "windows-path": {
+    "applies_to": "Windows filesystem paths as a host collector records them, not request paths",
+    "case_sensitive": false,
+    "separators": ["\\", "/"],
+    "percent_decode": false,
+    "unicode_escape": false,
+    "strip_path_params": false,
+    "remove_dot_segments": true,
+    "collapse_slashes": false,
+    "trim_trailing": ""
+  }
+}
