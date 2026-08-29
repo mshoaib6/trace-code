@@ -2,6 +2,8 @@
 
 Scrapes PoCs tied to CVEs, normalizes metadata across sources, and generates the study figures. Cloning the PoC repositories needs ~200G. Generated figures are in `figures/`.
 
+This stage builds the full PoC corpus the paper's evaluation runs over. Because of its size it is not distributed with this repository; stages 2 and 3 are shipped with the 45 evaluated CVEs so the pipeline can be run end to end without it. Run this stage to reconstruct the corpus.
+
 ## Requirements
 
 Python 3.10.12, git, network access.

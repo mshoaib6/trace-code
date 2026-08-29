@@ -2,6 +2,8 @@
 
 Compiles a Python PoC into syscall template graphs by parsing its AST and resolving library calls through a syscall mapping.
 
+The PoCs distributed here are those of the 45 evaluated CVEs, one per CVE, which is what the end-to-end demonstration compiles. The full corpus the paper compiles at scale is built by `1-trace-scraping/` and is not distributed, for size.
+
 ## Requirements
 
 Python 3.10.12, `autopep8`, `networkx`, `pydot==1.4.2`

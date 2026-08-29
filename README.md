@@ -12,7 +12,7 @@ Python 3.10.12. Each stage has its own README.
 
 ## Results
 
-`3-trace-align/` contains the provenance graphs for all 45 CVEs, so the pipeline runs end to end without scraping. Unzip them first.
+`3-trace-align/` contains the provenance graphs for the 45 evaluated CVEs, so the pipeline runs end to end on them without scraping. Unzip them first.
 
 ```bash
 cd 3-trace-align/splunk_extend && unzip -q graphs.zip && cd ../..
@@ -32,10 +32,6 @@ python3 eval_family.py --family_dir sig_out \
 45/45 CVEs aligned
 0 cross-product false alerts
 ```
-
-## Scope
-
-This repository demonstrates the pipeline end to end on the 45 evaluated CVEs: a PoC compiles to a template family, and that family aligns against the CVE's own provenance graph. It is not the full-scale evaluation, which runs over the complete PoC corpus and benign telemetry. That corpus is built by `1-trace-scraping/`, whose README states its storage requirement.
 
 ## Correspondence with the paper
 

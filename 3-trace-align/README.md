@@ -2,6 +2,8 @@
 
 Aligns template graphs to provenance graphs with a partial-order screen followed by a constrained refinement step.
 
+The provenance graphs distributed here are those of the 45 evaluated CVEs. Running the commands below reproduces the end-to-end result on them: a PoC compiles to a template family and that family aligns against the CVE's own provenance graph. The benign telemetry the paper measures false alerts against, and the full PoC corpus, are not distributed, for size; see `1-trace-scraping/`.
+
 ## Requirements
 
 Python 3.10.12, `numpy`, `networkx`, `torch`
