@@ -33,6 +33,8 @@ python3 eval_family.py --family_dir sig_out \
 0 cross-product false alerts
 ```
 
+The pretrained partial-order encoder is provided for testing. Training from scratch can be done with the full dataset.
+
 ## Correspondence with the paper
 
 `45/45` matches the 45 of 45 `eval.tex` reports at the CVE-associated grade: a CVE counts when some member of its compiled template family satisfies the alert predicate, scored per member and never pooled. Same 45 CVEs, same grade, compiled from PoC source.

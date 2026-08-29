@@ -178,21 +178,8 @@ def run_batch(graphs_dir: Path, trace_align_path: Path, args) -> None:
     sig_graphs = list(sig_by_path.values())
     prov_graphs = list(prov_by_path.values())
 
-    def build_model(sig_train, prov_train):
-        return mod.load_po_encoder()
 
-    global_model = build_model(sig_graphs, prov_graphs)
-    models_by_key = {}
-    for sp in sig_paths:
-        key = key_from_filename(sp)
-        if key in models_by_key:
-            continue
-        sig_train = [g for p, g in sig_by_path.items() if key_from_filename(p) != key]
-        prov_train = [g for p, g in prov_by_path.items() if key_from_filename(p) != key]
-        if not sig_train or not prov_train:
-            models_by_key[key] = global_model
-        else:
-            models_by_key[key] = build_model(sig_train, prov_train)
+    feature_space, encoder = mod.load_po_encoder()
 
     align_spec = mod.AlignSpec(
         po_eps=args.po_eps,
@@ -208,8 +195,6 @@ def run_batch(graphs_dir: Path, trace_align_path: Path, args) -> None:
     for pair in pairs:
         Gsig = sig_by_path[pair.sig_path]
         Gprov = prov_by_path[pair.prov_path]
-        model = models_by_key.get(key_from_filename(pair.sig_path), global_model)
-        feature_space, encoder = model
         res = mod.align_one(Gsig, Gprov, feature_space, encoder, align_spec, verbose=args.verbose)
 
         if res.found:

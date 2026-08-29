@@ -202,19 +202,8 @@ def run(args) -> None:
     prov_by_cve = {cve: mod.parse_graph_txt(p) for cve, p in provs.items()}
     groups = capture_groups(provs)
 
-    def build_model(sig_train, prov_train):
-        return mod.load_po_encoder()
 
-    all_sigs = list(sig_by_path.values())
-    all_provs = list(prov_by_cve.values())
-    global_model = build_model(all_sigs, all_provs)
-
-    models: Dict[str, tuple] = {}
-    for cve in sorted(set(family) | set(prov_by_cve)):
-        held = set(family.get(cve, []))
-        sig_train = [g for p, g in sig_by_path.items() if p not in held]
-        prov_train = [g for c, g in prov_by_cve.items() if c != cve]
-        models[cve] = build_model(sig_train, prov_train) if (sig_train and prov_train) else global_model
+    feature_space, encoder = mod.load_po_encoder()
 
     align_spec = mod.AlignSpec(
         po_eps=args.po_eps,
@@ -225,7 +214,6 @@ def run(args) -> None:
     )
 
     def aligns(cve: str, sig_path: Path, prov_cve: str):
-        feature_space, encoder = models.get(cve, global_model)
         return mod.align_one(sig_by_path[sig_path], prov_by_cve[prov_cve],
                              feature_space, encoder, align_spec, verbose=False)
 
