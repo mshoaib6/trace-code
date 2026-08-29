@@ -12,7 +12,14 @@ pip install numpy networkx torch
 
 ## Usage
 
-Extract `graphs.zip` in `poc_graphs/` or `splunk_extend/`, then:
+The graphs are stored zipped. Extract them first:
+
+```bash
+cd splunk_extend && unzip -q graphs.zip && cd ..
+cd poc_graphs   && unzip -q graphs.zip && cd ..
+```
+
+Then:
 
 ```bash
 python3 trace_batch_run.py --graphs_dir ./poc_graphs/graphs --trace_align ./trace_align.py [--all_pairs]

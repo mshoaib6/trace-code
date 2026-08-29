@@ -12,9 +12,12 @@ Python 3.10.12. Each stage has its own README.
 
 ## Results
 
-`3-trace-align/` contains the provenance graphs for all 45 CVEs, so the pipeline runs end to end without scraping.
+`3-trace-align/` contains the provenance graphs for all 45 CVEs, so the pipeline runs end to end without scraping. Unzip them first.
 
 ```bash
+cd 3-trace-align/splunk_extend && unzip -q graphs.zip && cd ../..
+cd 3-trace-align/poc_graphs   && unzip -q graphs.zip && cd ../..
+
 cd 2-trace-template-graph
 python3 compile_pocs_family.py ../3-trace-align/poc_real/poc ../3-trace-align/sig_out
 
