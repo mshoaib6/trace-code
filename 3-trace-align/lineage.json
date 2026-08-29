@@ -1,0 +1,17 @@
+{
+  "_comment": [
+    "Anchor to the independent PoC lineages it was observed in.",
+    "",
+    "An anchor is evidence when it recurs across PoCs written independently: two",
+    "authors reaching for the same concrete path is a property of the vulnerability,",
+    "one author's choice is not. C3 requires an anchor in at least two lineage",
+    "components; anything below that is C2 however concrete it looks.",
+    "",
+    "A lineage component groups PoCs related by fork or commit ancestry, by mutual",
+    "attribution, or by an identical canonical serialisation of the backward slice.",
+    "Computing it needs several PoCs per CVE. This repository carries one PoC per",
+    "CVE, so no anchor here reaches two components and the table is empty: every",
+    "concrete anchor classifies C2. Populating it requires the multi-PoC corpus,",
+    "which is not part of this repository."
+  ]
+}

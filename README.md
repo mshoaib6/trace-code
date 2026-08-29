@@ -33,6 +33,10 @@ python3 eval_family.py --family_dir sig_out \
 0 cross-product false alerts
 ```
 
+## Scope
+
+This repository demonstrates the pipeline end to end on the 45 evaluated CVEs: a PoC compiles to a template family, and that family aligns against the CVE's own provenance graph. It is not the full-scale evaluation, which runs over the complete PoC corpus and benign telemetry. That corpus is built by `1-trace-scraping/`, whose README states its storage requirement.
+
 ## Correspondence with the paper
 
 `45/45` matches the 45 of 45 `eval.tex` reports at the CVE-associated grade: a CVE counts when some member of its compiled template family satisfies the alert predicate, scored per member and never pooled. Same 45 CVEs, same grade, compiled from PoC source.
