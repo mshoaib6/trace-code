@@ -39,4 +39,6 @@ python3 eval_family.py --family_dir sig_out \
 
 `0 cross-product false alerts` is a cross-CVE check over all 1968 ordered pairs of the 45 captures: no template alerts on the capture of a CVE from a different product. The benign stream `eval.tex` also measures against exceeds this repository's size limit and is not included.
 
+The operation map `2-trace-template-graph/syscall_mapping.json` covers the 312 normalized API identifiers `design.tex` states, and `3-trace-align/collector_profiles.json` gives the 6 collector join specifications, one per collector profile over the five formats, alongside the 7 URL/path normalization profiles in `3-trace-align/normalization_profiles.json`.
+
 Parameters follow `design.tex`: τ 0.43, class weights (0.20, 0.33, 0.47), k 3, h 3, and the alert predicate `MS ≥ τ` with the mass floor `Σ wᵢnᵢ ≥ w₃`.
