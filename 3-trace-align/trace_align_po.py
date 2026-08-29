@@ -37,13 +37,11 @@ def apo_score(z_sig: np.ndarray, z_prov: np.ndarray, eps: float) -> float:
 
 
 def load_po_encoder(path: str | None = None):
-    """Load the frozen encoder and the feature space it was fitted on.
+    """Load the pretrained encoder and the feature space it uses.
 
-    The encoder is fitted once, offline, on a provenance corpus disjoint from
-    evaluation and shipped frozen; train_encoder.py refits it from such a corpus.
-    No evaluated CVE, PoC or provenance graph takes part in fitting it, and the
-    feature vocabulary is frozen alongside the weights, so the input space does
-    not depend on the corpus a run is scoring.
+    The weights ship in po_encoder.npz and the feature vocabulary is frozen
+    alongside them, so the input space does not depend on the corpus a run is
+    scoring.
     """
     import json
     from pathlib import Path

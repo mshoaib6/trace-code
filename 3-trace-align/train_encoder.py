@@ -7,9 +7,9 @@ E(z_sub, z_sup); a negative corrupts one, either by resampling another graph's
 rooted subgraph or by perturbing labels and edges, with loss max(0, alpha - E)^2
 at margin alpha = 1.
 
-The encoder in po_encoder.npz is fitted once, offline, and every evaluation
-loads it through trace_align_po.load_po_encoder. Point --corpus at a directory
-of provenance graphs in the NODE/EDGE format to refit.
+The pretrained encoder ships in po_encoder.npz and is what every evaluation
+loads, through trace_align_po.load_po_encoder. Point --corpus at a directory of
+provenance graphs in the NODE/EDGE format to produce a new one.
 
 Usage:
   python3 train_encoder.py --corpus <dir> [--out po_encoder.npz]
@@ -127,7 +127,7 @@ def main() -> int:
 
     np.savez(args.out, W=enc.W, d=args.d, F=fs.dim, vocab=json.dumps(V),
              gnn_hidden=32, gnn_hash=8, gnn_layers=1, gnn_seed=7)
-    print(f"fitted on {len(pairs)} pairs from {len(graphs)} graphs -> {args.out}")
+    print(f"{len(pairs)} pairs from {len(graphs)} graphs -> {args.out}")
     return 0
 
 

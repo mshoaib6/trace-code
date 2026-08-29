@@ -37,7 +37,7 @@ python3 eval_family.py --family_dir <dir> --prov_dir splunk_extend/graphs poc_gr
 
 Add `--show_mapping` for vertex mappings, `--out_csv PATH` for a CSV summary.
 
-The partial-order encoder ships fitted, in `po_encoder.npz`, and is loaded for every run. `train_encoder.py --corpus <dir>` refits it from a provenance corpus.
+The pretrained partial-order encoder is provided in `po_encoder.npz` and is loaded for every run. `train_encoder.py --corpus <dir>` produces a new one.
 
 ## Graph Format
 
@@ -72,7 +72,7 @@ Parameters: `--po_d` (128), `--k` (3), `--tau` (0.43), `--radius` (3).
 
 ## Public Datasets
 
-The alignment code also runs on these public provenance corpora. Obtain them from their maintainers under their own terms; the same applies to the encoder's fitting corpus.
+The alignment code also runs on these public provenance corpora. Obtain them from their maintainers under their own terms.
 
 - DARPA Transparent Computing [E3](https://github.com/darpa-i2o/Transparent-Computing/blob/master/README-E3.md) and [E5](https://github.com/darpa-i2o/Transparent-Computing)
 - [ATLASv2](https://bitbucket.org/sts-lab/atlasv2)
