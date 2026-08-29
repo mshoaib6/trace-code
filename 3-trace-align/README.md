@@ -70,5 +70,7 @@ Parameters: `--po_d` (128), `--k` (3), `--tau` (0.43), `--radius` (3).
 
 ## Public Datasets
 
+The alignment code also runs on these public provenance corpora. They are obtained from their maintainers under their own terms rather than redistributed here, as is the encoder's fitting corpus.
+
 - DARPA Transparent Computing [E3](https://github.com/darpa-i2o/Transparent-Computing/blob/master/README-E3.md) and [E5](https://github.com/darpa-i2o/Transparent-Computing)
 - [ATLASv2](https://bitbucket.org/sts-lab/atlasv2)
