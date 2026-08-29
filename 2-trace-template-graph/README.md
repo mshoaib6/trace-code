@@ -2,7 +2,7 @@
 
 Compiles a Python PoC into syscall template graphs by parsing its AST and resolving library calls through a syscall mapping.
 
-The PoCs distributed here are those of the 45 evaluated CVEs, one per CVE, which is what the end-to-end demonstration compiles. To compile at scale, first build the full PoC corpus with `1-trace-scraping/`; the templates it produces can then be aligned against the public provenance corpora linked in `3-trace-align/`.
+The PoCs here are the 45 evaluated CVEs, one each. For larger runs, build the PoC corpus with `1-trace-scraping/` and align the templates against the public corpora linked in `3-trace-align/`.
 
 ## Requirements
 

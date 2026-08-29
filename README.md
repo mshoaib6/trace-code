@@ -12,7 +12,7 @@ Python 3.10.12. Each stage has its own README.
 
 ## Results
 
-`3-trace-align/` contains the provenance graphs for the 45 evaluated CVEs, so the pipeline runs end to end on them without scraping. Unzip them first.
+`3-trace-align/` contains the provenance graphs for the 45 evaluated CVEs, so the pipeline runs end to end on them. Unzip them first.
 
 ```bash
 cd 3-trace-align/splunk_extend && unzip -q graphs.zip && cd ../..
@@ -33,14 +33,21 @@ python3 eval_family.py --family_dir sig_out \
 0 cross-product false alerts
 ```
 
-The pretrained partial-order encoder is provided for testing. Training from scratch can be done with the full dataset.
+The pretrained partial-order encoder is provided for testing.
 
 ## Correspondence with the paper
 
-`45/45` matches the 45 of 45 the paper reports at the CVE-associated grade: a CVE counts when some member of its compiled template family satisfies the alert predicate, scored per member and never pooled. Same 45 CVEs, same grade, compiled from PoC source.
+45/45 is the CVE-associated grade. A CVE counts when any member of its compiled template family meets the alert predicate. Scores are per member, never pooled.
 
-`0 cross-product false alerts` is a cross-CVE check over all 1968 ordered pairs of the 45 captures: no template alerts on the capture of a CVE from a different product.
+0 cross-product false alerts covers all 1968 ordered pairs of the 45 captures. No template alerts on another product's capture.
 
-The operation map `2-trace-template-graph/syscall_mapping.json` holds 365 keys, covering 312 normalized API identifiers once alias forms of one call are collapsed as the paper describes, and `3-trace-align/collector_profiles.json` gives the 6 collector join specifications, one per collector profile over the five formats, alongside the 7 URL/path normalization profiles in `3-trace-align/normalization_profiles.json`.
-
-Parameters follow the paper: τ 0.43, class weights (0.20, 0.33, 0.47), k 3, h 3, and the alert predicate `MS ≥ τ` with the mass floor `Σ wᵢnᵢ ≥ w₃`.
+| | |
+|---|---|
+| tau | 0.43 |
+| class weights | 0.20, 0.33, 0.47 |
+| k | 3 |
+| h | 3 |
+| alert predicate | MS >= tau and sum(w_i n_i) >= w_3 |
+| Pi | 365 keys, 312 normalized identifiers |
+| collector profiles | 6 |
+| normalization profiles | 7 |
