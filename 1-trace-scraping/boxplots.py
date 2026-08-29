@@ -16,20 +16,16 @@ def generate_boxplots():
     plt.savefig('figures/boxplot.pdf')
     plt.clf()
 
-    # Count the number of rows per unique 'CVE-Year' value
     year_counts = countdf['CVE-Year'].value_counts().sort_index()
 
-    # Create a bar plot for the 'CVE-Year' counts
     plt.bar(year_counts.index, year_counts.values)
 
-    # Set plot labels and title
     plt.xlabel('CVE Year')
     plt.ylabel('Count')
     plt.title('PoCs per CVE-Year')
 
     plt.xticks(rotation=45)
 
-    # Show the plot
     plt.savefig('figures/bargraph.pdf')
 
 if __name__ == "__main__":

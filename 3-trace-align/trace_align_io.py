@@ -73,6 +73,17 @@ def _wildcard_to_regex(pattern: str) -> re.Pattern:
     return re.compile(rf"^{esc}$")
 
 
+def _slash_norm(s: str) -> str:
+    return s.replace("\\", "/")
+
+
+def _windowsish(s: str) -> bool:
+    low = s.lower()
+    return ("\\" in s or re.match(r"^[a-zA-Z]:", s) is not None
+            or low.endswith((".dll", ".exe", ".bat", ".cmd", ".ps1", ".sys", ".scr", ".msi"))
+            or ".dll" in low or ".exe" in low)
+
+
 def label_matches(sig_label: str, prov_label: str) -> bool:
     s = (sig_label or "").strip()
     p = (prov_label or "").strip()
@@ -86,5 +97,14 @@ def label_matches(sig_label: str, prov_label: str) -> bool:
     if "(executable)" in s or s.lower().endswith(".executable") or s.lower().endswith("*.executable"):
         return True
     if "*" in s:
-        return bool(_wildcard_to_regex(s).match(p))
-    return s == p
+        rx = _wildcard_to_regex(s)
+        if rx.match(p) or _wildcard_to_regex(_slash_norm(s)).match(_slash_norm(p)):
+            return True
+        if _windowsish(s) or _windowsish(p):
+            return bool(_wildcard_to_regex(_slash_norm(s).lower()).match(_slash_norm(p).lower()))
+        return False
+    if s == p or _slash_norm(s) == _slash_norm(p):
+        return True
+    if _windowsish(s) or _windowsish(p):
+        return _slash_norm(s).lower() == _slash_norm(p).lower()
+    return False

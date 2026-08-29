@@ -18,7 +18,6 @@ for item, count in fcall_list:
     else: 
         remaining += count
 over_100.append(("Remaining", remaining))
-# over_100 = fcall_list[:100]
 over_100_functions = [item[0] for item in over_100]
 pickle.dump(over_100_functions, open('function_names.pkl', 'wb'))
 

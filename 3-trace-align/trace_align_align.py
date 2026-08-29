@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import os
+import re
 from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
@@ -60,8 +62,78 @@ def _node_compat(sig_node: str, prov_node: str, Gsig: nx.MultiDiGraph, Gprov: nx
     return label_matches(str(sd.get("label", "")), str(pd.get("label", "")))
 
 
-def _edge_compat(syscall_sig: str, syscall_prov: str) -> bool:
-    return syscall_sig == syscall_prov
+_REQUEST_CLASSES = {"read", "write"}
+
+_WEB_HANDLER_EXT = (
+    ".asp", ".aspx", ".ashx", ".asmx", ".axd",
+    ".jsp", ".jspx", ".jsf", ".do", ".action",
+    ".php", ".php3", ".php4", ".php5", ".php7", ".phtml",
+    ".cgi", ".fcgi", ".cfm", ".cfc", ".vm",
+)
+
+_PSEUDO_OBJECT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+.-]*::")
+
+_REMOTE_ACCESS = "access"
+
+
+def _label_branches(label: str) -> List[str]:
+    s = str(label or "")
+    return [b.strip() for b in s.split("|")] if "|" in s else [s.strip()]
+
+
+def _names_web_handler(branch: str) -> bool:
+    head = branch.replace("\\", "/").split("?", 1)[0]
+    return any(seg.strip("*").lower().endswith(_WEB_HANDLER_EXT) for seg in head.split("/"))
+
+
+def _is_request_target(branch: str) -> bool:
+    s = branch.lstrip("*")
+    return s.startswith("/") and "\\" not in s
+
+
+def _process_and_object(G: nx.MultiDiGraph, u: str, v: str) -> Tuple[Optional[str], Optional[str]]:
+    for p, o in ((u, v), (v, u)):
+        if G.nodes[p].get("type") == "process" and G.nodes[o].get("type") != "process":
+            return p, o
+    return None, None
+
+
+def _reached_from_network(G: nx.MultiDiGraph, proc: str) -> bool:
+    return any(G.nodes[a].get("type") == "net" and str(d.get("syscall", "")) == _REMOTE_ACCESS
+               for a, _, d in G.in_edges(proc, data=True))
+
+
+def _template_request_edge(Gsig: nx.MultiDiGraph, u: str, v: str) -> bool:
+    proc, obj = _process_and_object(Gsig, u, v)
+    if obj is None:
+        return False
+    return any(_is_request_target(b) or _names_web_handler(b)
+               for b in _label_branches(str(Gsig.nodes[obj].get("label", ""))))
+
+
+def _observed_request_edge(G: nx.MultiDiGraph, u: str, v: str) -> bool:
+    proc, obj = _process_and_object(G, u, v)
+    if obj is None:
+        return False
+    label = str(G.nodes[obj].get("label", "")).strip()
+    if any(_names_web_handler(b) for b in _label_branches(label)):
+        return True
+    if not _reached_from_network(G, proc):
+        return False
+    return label.startswith("/") or _PSEUDO_OBJECT_RE.match(label) is not None
+
+
+def _sc_eq(syscall_prov: str, syscall_sig: str,
+           G: Optional[nx.MultiDiGraph] = None,
+           u: Optional[str] = None, v: Optional[str] = None,
+           template_request: bool = False) -> bool:
+    if syscall_prov == syscall_sig:
+        return True
+    if not template_request or G is None:
+        return False
+    if syscall_prov not in _REQUEST_CLASSES or syscall_sig not in _REQUEST_CLASSES:
+        return False
+    return _observed_request_edge(G, u, v)
 
 
 def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[Tuple[str, str, int]]:
@@ -72,12 +144,63 @@ def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[T
     return hits
 
 
+_PROCESS_CREATION = {"create", "spawn", "fork", "exec", "procstart"}
+
+_STRICT_PATH = os.environ.get("TRACE_ALIGN_STRICT_PATH", "1") not in ("0", "false", "False")
+
+
+def _service_endpoints(G: nx.MultiDiGraph, proc: str) -> frozenset:
+    return frozenset(v for _, v, d in G.out_edges(proc, data=True)
+                     if G.nodes.get(v, {}).get("type") == "net"
+                     and str(d.get("syscall", "")) == "connect")
+
+
+def _same_service(G: nx.MultiDiGraph, u: str, w: str) -> bool:
+    if u == w:
+        return False
+    if G.nodes.get(u, {}).get("type") != "process" or G.nodes.get(w, {}).get("type") != "process":
+        return False
+    shared = _service_endpoints(G, u) & _service_endpoints(G, w)
+    return bool(shared)
+
+
+def _strict_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, k: int,
+                 template_request: bool) -> bool:
+    def terminal(u, v):
+        return any(_sc_eq(str(d.get("syscall", "")), syscall, G, u, v, template_request)
+                   for _, w, d in G.out_edges(u, data=True) if w == v)
+
+    origins = [src] + [w for w in G.nodes if _same_service(G, src, w)]
+    if any(terminal(o, dst) for o in origins):
+        return True
+    if (G.nodes.get(dst, {}).get("type") == "process"
+            and G.nodes.get(src, {}).get("type") != "process"):
+        return False
+
+    frontier = [(o, {o}) for o in origins]
+    for _ in range(k):
+        nxt = []
+        for u, seen in frontier:
+            for _, w, d in G.out_edges(u, data=True):
+                if w in seen:
+                    continue
+                if str(d.get("syscall", "")) not in _PROCESS_CREATION:
+                    continue
+                if terminal(w, dst):
+                    return True
+                nxt.append((w, seen | {w}))
+        if not nxt:
+            return False
+        frontier = nxt
+    return False
+
+
 def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, k: int,
-                          max_depth: int = 5) -> bool:
+                          max_depth: int = 5, template_request: bool = False) -> bool:
     if src == dst:
         return True
-    # A template edge may span at most k intermediate vertices, and no search
-    # runs deeper than the refinement depth bound d_max.
+    if _STRICT_PATH:
+        return _strict_path(G, src, dst, syscall, k, template_request)
     max_len = min(k + 1, max_depth)
     from collections import deque
     q = deque([(src, 0, False)])
@@ -87,7 +210,7 @@ def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, 
         if depth >= max_len:
             continue
         for _, v, _, ed in G.out_edges(u, keys=True, data=True):
-            seen2 = seen or (str(ed.get("syscall", "")) == syscall)
+            seen2 = seen or _sc_eq(str(ed.get("syscall", "")), syscall, G, u, v, template_request)
             state = (v, depth + 1, seen2)
             if state in visited:
                 continue
@@ -115,7 +238,7 @@ def refine_alignment(Gsig: nx.MultiDiGraph,
 
     sig_edges = []
     for u, v, _, ed in Gsig.edges(keys=True, data=True):
-        sig_edges.append((u, v, str(ed.get("syscall", ""))))
+        sig_edges.append((u, v, str(ed.get("syscall", "")), _template_request_edge(Gsig, u, v)))
 
     assignment: Dict[str, str] = {}
     used_prov: set[str] = set()
@@ -123,19 +246,16 @@ def refine_alignment(Gsig: nx.MultiDiGraph,
     def consistent_partial(sn: str, pn: str) -> bool:
         tmp_assign = dict(assignment)
         tmp_assign[sn] = pn
-        for su, sv, sc in sig_edges:
+        for su, sv, sc, req in sig_edges:
             if su in tmp_assign and sv in tmp_assign:
                 pu, pv = tmp_assign[su], tmp_assign[sv]
                 ok = _find_k_tolerant_path(Gcand, pu, pv, sc, refine_spec.k,
-                                           max_depth=refine_spec.max_depth)
+                                           max_depth=refine_spec.max_depth,
+                                           template_request=req)
                 if not ok:
                     return False
         return True
 
-    # Every template vertex must find a counterpart: refinement is seeded from
-    # the high-confidence vertices and expands until the whole template is
-    # mapped, so a template vertex with no consistent counterpart means the
-    # candidate subgraph does not contain the template.
     if any(not cand_map[sn] for sn in sig_nodes):
         if verbose:
             print("  [refine] a template vertex has no compatible counterpart")
@@ -193,8 +313,6 @@ def align_one(Gsig: nx.MultiDiGraph,
         z_p = encoder.embed(feature_space.vectorize(H))
         E = order_violation_energy(z_sig, z_p)
         s = apo_score(z_sig, z_p, eps=spec.po_eps)
-        # Screen admits a candidate when the order-violation energy is within
-        # the margin; the score then ranks the survivors.
         if E <= spec.po_eps and s >= spec.po_theta:
             candidates.append((proc, s, E))
 
@@ -203,14 +321,12 @@ def align_one(Gsig: nx.MultiDiGraph,
     if verbose:
         print(f"[stage1] candidates passing PO screen: {len(candidates)}/{len(proc_subs)}")
 
-    # The confidence-weighted match score gates the alert; it is used here and
-    # never surfaced, since only the alert decision is meaningful downstream.
     for proc, s, E in candidates:
         ok, mapping = refine_alignment(Gsig, proc_subs[proc], spec.refine, verbose=verbose, kappa=kappa)
         if not ok:
             continue
-        ms, _, _ = match_score(kappa, mapping)
-        if raises_alert(ms, spec.score):
+        ms, raw, _ = match_score(kappa, mapping)
+        if raises_alert(ms, spec.score) and raw >= _CONF_WEIGHT[C3]:
             return AlignResult(True, proc, mapping)
 
     return AlignResult(False, None, {})

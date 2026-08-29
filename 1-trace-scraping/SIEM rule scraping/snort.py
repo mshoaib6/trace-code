@@ -18,7 +18,7 @@ def fetch_snort_rules(cve):
             return (cve, ', '.join(rule_links)) if rule_links else (cve, None)
         elif response.status_code == 429:
             print("Rate limited. Sleeping for 5 seconds.")
-            time.sleep(5)  # Reduced sleep time to 5 seconds
+            time.sleep(5)
             return fetch_snort_rules(cve)
     except requests.RequestException as e:
         print(f"Error fetching {cve}: {e}")

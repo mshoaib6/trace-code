@@ -11,13 +11,10 @@ def copy_tags():
 
     tags = tags.apply(lambda x: len(x) == 0)
 
-    # Replace 'Tags' column with NaN where it's an empty list or NA
     df.loc[tags, 'Tags'] = np.nan
 
-    # Group by 'CVE ID' and forward-fill the NaN values in 'Tags' column
     df['Tags'] = df.groupby('CVE ID')['Tags'].transform(lambda x: x.ffill().bfill())
 
-    # Replace the remaining NaN values with an empty list
     df['Tags'] = df['Tags'].apply(lambda x: [] if type(x) is not list else x)
 
     num_modified_rows = (df['Tags'] != original['Tags']).sum()

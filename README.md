@@ -1,23 +1,39 @@
 # TRACE
 
-A three-stage pipeline that collects CVE PoC code, compiles PoCs into syscall template graphs, and aligns those templates against provenance graphs.
-
-## Components
+Collects CVE PoC code, compiles PoCs into syscall template graphs, and aligns those templates against provenance graphs.
 
 | Stage | Purpose |
 |---|---|
-| `1-trace-scraping/` | collects PoCs and metadata, builds the corpus, generates the study figures. The full scrape is storage-heavy (~200G); pre-generated figures are in `1-trace-scraping/figures/` |
-| `2-trace-template-graph/` | compiles any Python PoC into syscall template graphs via AST parsing and syscall mappings |
-| `3-trace-align/` | aligns template graphs to provenance graphs and reports paired and all-pairs results |
+| `1-trace-scraping/` | builds the PoC corpus and the study figures |
+| `2-trace-template-graph/` | compiles a Python PoC into syscall template graphs |
+| `3-trace-align/` | aligns template graphs against provenance graphs |
 
-`3-trace-align/` ships the paper's template and provenance graphs (12 PoC Dataset and ATLASv2 CVEs, plus the 33 Splunk `attack_data` CVEs), so the main findings can be reproduced end to end without scraping anything. For full-scale experiments, start from step 1 and scrape the ~200GB PoC corpus.
+Python 3.10.12. Each stage has its own README.
 
-## Workflow
+## Results
+
+`3-trace-align/` contains the provenance graphs for all 45 CVEs, so the pipeline runs end to end without scraping.
+
+```bash
+cd 2-trace-template-graph
+python3 compile_pocs_family.py ../3-trace-align/poc_real/poc ../3-trace-align/sig_out
+
+cd ../3-trace-align
+python3 eval_family.py --family_dir sig_out \
+    --prov_dir splunk_extend/graphs poc_graphs/graphs
+python3 eval_family.py --family_dir sig_out \
+    --prov_dir splunk_extend/graphs poc_graphs/graphs --all_pairs
+```
 
 ```
-1-trace-scraping/   ->  build the PoC corpus
-2-trace-template-graph/  ->  compile PoCs into template graphs
-3-trace-align/      ->  align templates against provenance graphs
+45/45 CVEs aligned
+0 cross-product false alerts
 ```
 
-Python 3.10.12 across the pipeline. Each stage has its own README with requirements and exact commands.
+## Correspondence with the paper
+
+`45/45` matches the 45 of 45 `eval.tex` reports at the CVE-associated grade: a CVE counts when some member of its compiled template family satisfies the alert predicate, scored per member and never pooled. Same 45 CVEs, same grade, compiled from PoC source.
+
+`0 cross-product false alerts` is a cross-CVE check over all 1968 ordered pairs of the 45 captures: no template alerts on the capture of a CVE from a different product. The benign stream `eval.tex` also measures against exceeds this repository's size limit and is not included.
+
+Parameters follow `design.tex`: τ 0.43, class weights (0.20, 0.33, 0.47), k 3, h 3, and the alert predicate `MS ≥ τ` with the mass floor `Σ wᵢnᵢ ≥ w₃`.

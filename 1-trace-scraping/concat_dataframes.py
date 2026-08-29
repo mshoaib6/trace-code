@@ -10,7 +10,6 @@ def concat_dataframes():
 
     total_df = concat([df1, df2, df3, df4], ignore_index=True)
     
-    # strip whitespace and other non-numeric characters
     total_df['CVE-Year'] = total_df['CVE-Year'].astype(str).str.replace(r'\D', '', regex=True)
     total_df['CVE-Year'] = pd.to_numeric(total_df['CVE-Year'], errors='coerce').astype('Int64')
     total_df = total_df[total_df['CVE-Year'] >= 2018]
@@ -25,7 +24,6 @@ def concat_dataframes():
     total_df['Publish-Year'] = total_df['Publish-Year'].astype(int)
     print(total_df[total_df['CVE-Year'] > total_df['Publish-Year']])
 
-    # Make 'Tags' column with empty lists (this column not scraped as of 2025)
     total_df['Tags'] = total_df.get('Tags', pd.Series([[]] * len(total_df)))
 
     total_df = total_df.reset_index()

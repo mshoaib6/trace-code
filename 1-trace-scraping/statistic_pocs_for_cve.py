@@ -1,6 +1,3 @@
-'''
-This script analyzes the dataset of PoCs to gather statistics on the number of PoCs available for each CVE (Common Vulnerabilities and Exposures) ID and the programming languages used in these PoCs. The statistics include the total number of CVEs analyzed, the total number of PoCs found, and the average number of PoCs per CVE. These statistics can provide insights into the diversity of PoCs available for different vulnerabilities.
-'''
 
 
 import pandas as pd
@@ -35,18 +32,14 @@ for group in group_array:
         foldername = os.path.join('total-folder', member['Foldername'])
         print(foldername)
         
-        # Get the file extensions in the directory
         extensions = get_file_extensions(foldername)
         
-        # If the CVE ID is not already in the dictionary, add it
         if member['CVE ID'] not in cve_languages:
             cve_languages[member['CVE ID']] = extensions
         else:
-            # If the CVE ID is already in the dictionary, update the count of extensions
             for ext, count in extensions.items():
                 cve_languages[member['CVE ID']][ext] += count
 
-# Print the results and gather data for statistics
 total_pocs = 0
 cve_count = 0
 for cve_id, languages in cve_languages.items():
@@ -54,7 +47,6 @@ for cve_id, languages in cve_languages.items():
     total_pocs += sum(languages.values())
     cve_count += 1
 
-# Print statistics
 print(f"\nStatistics:")
 print(f"Total number of CVEs: {cve_count}")
 print(f"Total number of PoCs: {total_pocs}")

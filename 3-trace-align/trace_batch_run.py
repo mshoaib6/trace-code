@@ -1,21 +1,3 @@
-#!/usr/bin/env python3
-"""
-trace_batch_run.py
-Batch runner for TRACE alignment using trace_align.py.
-
-What it does:
-  - Loads many signature graphs (sig-*.txt) and provenance graphs (prov-*.txt)
-  - Trains the PO encoder once (fast, "online per run" style for quick and fully reproducible evaluation from scratch)
-  - Runs alignment for each (sig, prov) pair
-    * default pairing: match by key (e.g., CVE-2023-23488) extracted from filenames
-Dependencies (same as trace_align.py):
-  - Python 3.10.12
-  - numpy
-  - networkx
-
-Example:
-  python trace_batch_run.py --graphs_dir ./graphs --trace_align ./trace_align.py --show_mapping
-"""
 
 from __future__ import annotations
 
@@ -54,8 +36,8 @@ def load_trace_align_module(path: Path):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Could not import trace_align from: {path}")
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod  # critical for @dataclass in Python 3.10
-    spec.loader.exec_module(mod)  # type: ignore
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
     return mod
 
 def discover_graphs(root: Path) -> Tuple[List[Path], List[Path]]:
@@ -90,14 +72,6 @@ def _cve_of(name: str) -> str:
 
 
 def report_all_pairs_metrics(rows, graphs_dir: Path) -> None:
-    """P@1 and cross-CVE false alerts over the all-pairs matrix.
-
-    Some vendor bundles are published as one co-exercised capture covering
-    several CVEs at once (the four Junos J-Web CVEs are one such chain), so
-    those CVEs share identical signature and provenance files. A pair drawn
-    from inside such a group compares a capture with a copy of itself rather
-    than two different CVEs, and is not a cross-CVE comparison.
-    """
     group: Dict[str, str] = {}
     for sp in graphs_dir.rglob("sig-*.txt"):
         cve = _cve_of(sp.name)
@@ -166,7 +140,6 @@ def main() -> None:
     ap.add_argument("--k", type=int, default=3)
     ap.add_argument("--radius", type=int, default=3)
 
-    # PO-GNN feature block params
     ap.add_argument("--gnn_hidden", type=int, default=32)
     ap.add_argument("--gnn_hash", type=int, default=8)
     ap.add_argument("--gnn_layers", type=int, default=1)

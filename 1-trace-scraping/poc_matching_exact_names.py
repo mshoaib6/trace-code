@@ -54,7 +54,6 @@ for cve_id, group in grouped:
     all_potential_strings = set()
     all_verified_strings = set()
     
-    # Collect all potential wildcards from all PoCs under the same CVE
     for _, row in group.iterrows():
         foldername = os.path.join('total-folder', row['Foldername'])
         python_files = glob.glob(os.path.join(foldername, '*.py'))
@@ -73,7 +72,6 @@ for cve_id, group in grouped:
 
     cve_wildcard_analysis[cve_id]['potential'] = all_potential_strings
 
-    # Now, check these potential wildcards across all PoCs for the CVE
     for potential_string in all_potential_strings:
         for _, row in group.iterrows():
             foldername = os.path.join('total-folder', row['Foldername'])
@@ -88,7 +86,6 @@ for cve_id, group in grouped:
 
     cve_wildcard_analysis[cve_id]['verified'] = all_verified_strings
 
-    # Categorize the potential strings
     for string in all_potential_strings:
         if string in all_verified_strings:
             wildcard_count["fully wildcard"] += 1
@@ -101,9 +98,6 @@ for cve_id, group in grouped:
 print("Final counts:")
 print(wildcard_count)
 
-# From here, you can continue to aggregate, print or otherwise manipulate the cve_wildcard_analysis data as needed.
-
-# 1. Identifying which CVEs have the highest number of verified wildcards
 
 cve_verified_count = {cve: len(details['verified']) for cve, details in cve_wildcard_analysis.items()}
 sorted_cves_by_verified = sorted(cve_verified_count.items(), key=lambda item: item[1], reverse=True)
@@ -112,7 +106,6 @@ print("\nTop 10 CVEs with Highest Number of Verified Wildcards:")
 for i, (cve, count) in enumerate(sorted_cves_by_verified[:10]):
     print(f"{i+1}. {cve}: {count} verified wildcards")
 
-# 2. Which CVEs have potential wildcards that couldn't be verified in any PoCs
 
 unverified_cves = {cve: details['potential'] - details['verified'] for cve, details in cve_wildcard_analysis.items() if len(details['potential'] - details['verified']) > 0}
 
@@ -120,7 +113,6 @@ print("\nCVEs with Unverified Wildcards:")
 for cve, unverified in unverified_cves.items():
     print(f"{cve}: {len(unverified)} unverified wildcards")
 
-# 3. General summary of the findings
 
 total_cves = len(cve_wildcard_analysis)
 cves_with_verified = len([cve for cve, details in cve_wildcard_analysis.items() if details['verified']])

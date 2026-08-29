@@ -30,7 +30,6 @@ def get_folder_update_date(folder_path):
 def scrape_from_rhino():
     print("Scraping from Rhino Security Labs...")
 
-    # need repo with PoCs, clone if does not exist
     clone_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'rhinoseclab/CVEs'))
     if not os.path.isdir(clone_path):
         print("Rhinoseclab CVEs not found, cloning from the git repo...", flush=True)
@@ -70,9 +69,6 @@ def scrape_from_rhino():
     df.to_pickle('rhinoseclab/rhino_results.pkl')
 
     print("Finished scraping from Rhino Security Lab!")
-
-
-
 
 
 if __name__ == "__main__":

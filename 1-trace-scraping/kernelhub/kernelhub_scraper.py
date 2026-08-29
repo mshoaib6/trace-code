@@ -33,7 +33,6 @@ def scrape_from_kernelhub():
         return
     
     clone_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'Kernelhub'))
-    # need repo with PoCs, clone if does not exist
     if not os.path.isdir(clone_path):
         print("KernelHub clone not found, cloning the git repo...", flush=True)
         kh_url = "https://github.com/Ascotbe/Kernelhub.git"

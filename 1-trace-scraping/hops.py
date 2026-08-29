@@ -28,11 +28,6 @@ def recur_through_attributes(node):
         return None
     else:
         return None
-    # else:
-    #     print("ERROR: Unrecognized node type")
-    #     print(ast.dump(node))
-    #     print(ast.unparse(node))
-    #     exit(1)
 
 def has_earlier_function_call(node):
     if isinstance(node, ast.Name):
@@ -78,9 +73,6 @@ def get_attribute_name(node, function_mapping):
                         return attribute_chain + "." + node.attr
     return node.attr
 
-        # print("ERROR! ATTRIBUTE NAME")
-        # print("print node dump:\n\n")
-        # print(ast.dump(node))
 
 def process_call_node(node, function_mapping, variable_mapping):
     node = map_variables_and_remove_call_arguments(node, variable_mapping)
@@ -92,13 +84,6 @@ def process_call_node(node, function_mapping, variable_mapping):
         function_name = get_attribute_name(node.func, function_mapping)
     else:
         function_name = None
-    # elif isinstance(node.func, ast.BinOp) or isinstance(node.func, ast.Call) or isinstance(node.func, ast.Subscript) or isinstance(node.func, ast.IfExp) or isinstance(node.func, ast.Constant):
-    #     function_name = None
-    # else:
-    #     print('error')
-    #     print(ast.unparse(node))
-    #     print(ast.dump(node))
-    #     exit(1)
     
     if function_name:
         function_name += "()"
@@ -111,35 +96,17 @@ def is_user_defined_module(foldername, module_name):
     return os.path.exists(file_path)
 
 def function_is_relevant(function_name, user_defined_functions, user_defined_modules_and_functions, function_mapping):
-    # Case 0: None returned
     if not function_name:
         return False
-    # Case 1: User-defined function
     if function_name in user_defined_functions:
         return False
-    # Case 2: Built-in function
     if function_name in builtins.__dict__.keys():
         return True
-    # Case 3: User-defined file
     if "." in function_name:
         for module in user_defined_modules_and_functions:
             if function_name.startswith(module) and (function_name == module or (len(function_name) > len(module) and function_name[len(module)] == '.')):
                 return False
-    # Case 4: Library import or function call on object 
     return True
-    # if function_name in function_mapping.values():
-    #     return True
-    # for key in function_mapping:
-    #     if function_name.startswith(function_mapping[key]) and function_name[len(function_mapping[key])] == '.':
-    #         return True
-    # print("Unknown case?")
-    # print(function_name)
-    # print(user_defined_functions)
-    # print(user_defined_modules_and_functions)
-    # print(function_mapping)
-    # exit(1)
-    # file_path = os.path.join(script_directory, import_name + ".py")
-    # return os.path.exists(file_path)
     
 class NodeReplacer(ast.NodeTransformer):
     def __init__(self, variable_mapping):
@@ -147,7 +114,6 @@ class NodeReplacer(ast.NodeTransformer):
 
     def visit(self, node):
         if isinstance(node, ast.Name) and node.id in self.variable_mapping:
-            # Replace the node with the new node
             return self.variable_mapping[node.id]
         elif isinstance(node, ast.Call):
             nodes_to_remove = set()
@@ -157,20 +123,13 @@ class NodeReplacer(ast.NodeTransformer):
             for arg in nodes_to_remove:
                 node.args.remove(arg)
 
-        # If the condition is not met, continue traversing the AST
         return self.generic_visit(node)
 
-# replaces all variables with current_mapping and returns node
 def map_variables_and_remove_call_arguments(value, variable_mapping):
     value = copy.deepcopy(value)
     replacer = NodeReplacer(variable_mapping=variable_mapping)
     value = replacer.visit(value)
     return value
-    # else:
-    #     print("Cannot map variables")
-    #     print("Dump: ", ast.dump(value))
-    #     print("Unparse: ", ast.unparse(value))
-    #     exit(1)
 
 def parse_file(filename, foldername):
     global failed, python2, failed_dirs, index, function_calls
@@ -220,19 +179,14 @@ def parse_string(string_to_parse):
     filename = 'idek'
     function_calls = {}
 
-    # remove all call arguments from AST
     return parse_tree(tree, foldername, filename)
 
 def parse_tree(tree, foldername, filename):
     global syscalls
     total = 0
-    # mapping of functions/aliases to modules and original function names
     function_mapping = {}
-    # set of user defined functions within a file
     user_defined_functions = set()
-    # set of modules defined by users
     user_defined_modules_and_functions = set()
-    # mapping of variable names to complete statements
     variable_mapping = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -245,7 +199,6 @@ def parse_tree(tree, foldername, filename):
                         user_defined_modules_and_functions.add(alias.name)
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                # relative import case ???
                 if alias.asname:
                     if node.module:
                         function_mapping[alias.asname] = node.module + "." + alias.name
@@ -274,9 +227,6 @@ def parse_tree(tree, foldername, filename):
                             user_defined_modules_and_functions.add(alias.name)
         elif isinstance(node, ast.FunctionDef):
             user_defined_functions.add(node.name + "()")
-    # print(function_mapping)
-    # print(user_defined_functions)
-    # print(user_defined_modules_and_functions)
     
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -291,18 +241,6 @@ def parse_tree(tree, foldername, filename):
                             variable_name = element.id
                             mapped_expression = map_variables_and_remove_call_arguments(node.value, variable_mapping)
                             variable_mapping[variable_name] = mapped_expression
-                        # elif not isinstance(element, ast.Attribute) and not isinstance(element, ast.Starred) and not isinstance(element, ast.Tuple):
-                        #     print("Unrecognized tuple member")
-                        #     print("Dump: ", ast.dump(target))
-                        #     print("Unparse: ", ast.unparse(target))
-                        #     exit(1)
-                # elif not isinstance(target, ast.Attribute) and not isinstance(target, ast.Subscript):
-                #     print("Unrecognized node type")
-                #     print("Dump: ", ast.dump(node))
-                #     print("Unparse: ", ast.unparse(node))
-                #     print("Target dump: ", ast.dump(target))
-                #     print("Target unparse: ", ast.unparse(target) )
-                #     exit(1)
         elif isinstance(node, ast.AugAssign):
             if isinstance(node.target, ast.Name):
                 variable_name = node.target.id
@@ -320,7 +258,6 @@ def parse_tree(tree, foldername, filename):
                 variable_mapping[variable_name] = type
         elif isinstance(node, ast.With):
             for item in node.items:
-                # if len(node.items) == 1 and isinstance(node.items[0].context_expr, ast.Call):
                 if isinstance(item.context_expr, ast.Call):
                     function = item.context_expr
                     if item.optional_vars:
@@ -331,21 +268,14 @@ def parse_tree(tree, foldername, filename):
                             print("Dump: ", ast.dump(node))
                             print("Unparse: ", ast.dump(node))
                             exit(1)
-                # else:
-                #     print("context expression unrecognized node type")
-                #     print("Dump: ", ast.dump(node))
-                #     print("Unparse: ", ast.unparse(node))
-                #     exit(1)
         if isinstance(node, ast.Call):
             function_name = process_call_node(node, function_mapping, variable_mapping)
             
-            # Check that function isn't user defined
             if function_is_relevant(function_name, user_defined_functions, user_defined_modules_and_functions, function_mapping):
                 if function_name in syscalls and function_name != "print()":
                     total += len(syscalls[function_name])
                     print(function_name)
                     print(total)
-                    # print("Function " + function_name + " has syscalls " + "".join(syscalls[function_name]))
     
     return total
 
@@ -386,35 +316,10 @@ def count_function_calls():
     with open(output_filename, 'wb') as f:
         pickle.dump(totals, f)
 
-    # fcall_list = list(function_calls.items())
-    # fcall_list.sort(key = lambda x: x[1], reverse = True)
-    # over_100 = []
-    # remaining = 0
-    # for item, count in fcall_list:
-    #     if count >= 100:
-    #         over_100.append((item, count)) 
-    #     else:
-    #         remaining += count
-    # over_100.append(("Remaining", remaining))
-
-
-    # for item, count in over_100:
-    #     print(f'{item}: {count}')
-    
-    # print('total: ' + str(total))
-    # print('failed: ' + str(failed))
-    # print('python2: ' + str(python2))
-
-    # with open("function-call-log.txt", "a") as f:
-    #     for item, count in over_100:
-    #         f.write(f'{item}: {count}\n')
 
     failed_dirs.to_pickle('failed.pkl')
     failed_dirs.to_csv('failed.csv')
 
-    # with open('function_calls.pkl', 'wb') as picklefile:
-    #     pickle.dump(function_calls, picklefile)
     
-
 if __name__ == "__main__":
     count_function_calls()

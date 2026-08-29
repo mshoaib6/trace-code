@@ -12,7 +12,7 @@ def map_source(foldername):
     elif 'poc-in-gh' in foldername:
         return 'PoCInGitHub'
     else:
-        return None  # Handle cases where no match is found
+        return None
 
 def compute_overlap():
     df = pd.read_pickle("total_results.pkl")

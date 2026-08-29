@@ -22,11 +22,6 @@ def recur_through_attributes(node):
         return None
     else:
         return None
-    # else:
-    #     print("ERROR: Unrecognized node type")
-    #     print(ast.dump(node))
-    #     print(ast.unparse(node))
-    #     exit(1)
 
 def has_earlier_function_call(node):
     if isinstance(node, ast.Name):
@@ -91,16 +86,11 @@ def process_call_node(node, function_mapping, variable_mapping):
         try:
             args.append(ast.unparse(arg))
         except ValueError:
-            # Python 3.9 ast.unparse chokes on f-strings containing backslashes.
-            # Treat the arg as an opaque wildcard so extraction can continue.
             args.append("*")
-    # Keyword arguments carry the operand just as often as positional ones in
-    # real PoCs (requests.get(url=..., data=...)); keep them by name so the
-    # operation map can select url/data/path whichever form the call uses.
     kwargs = {}
     for kw in node.keywords:
         if kw.arg is None:
-            continue  # **kwargs splat: no name to key on
+            continue
         try:
             kwargs[kw.arg] = ast.unparse(kw.value)
         except ValueError:
@@ -114,21 +104,16 @@ def is_user_defined_module(foldername, module_name):
     return os.path.exists(file_path)
 
 def function_is_relevant(function_name, user_defined_functions, user_defined_modules_and_functions, function_mapping):
-    # Case 0: None returned
     if not function_name:
         return False
-    # Case 1: User-defined function
     if function_name in user_defined_functions:
         return False
-    # Case 2: Built-in function
     if function_name in builtins.__dict__.keys():
         return True
-    # Case 3: User-defined file
     if "." in function_name:
         for module in user_defined_modules_and_functions:
             if function_name.startswith(module) and (function_name == module or (len(function_name) > len(module) and function_name[len(module)] == '.')):
                 return False
-    # Case 4: Library import or function call on object 
     return True
     
 class NodeReplacer(ast.NodeTransformer):
@@ -137,12 +122,9 @@ class NodeReplacer(ast.NodeTransformer):
 
     def visit(self, node):
         if isinstance(node, ast.Name) and node.id in self.variable_mapping:
-            # Replace the node with the new node
             return self.variable_mapping[node.id]
-        # If the condition is not met, continue traversing the AST
         return self.generic_visit(node)
 
-# replaces all variables with current_mapping and returns node
 def map_variables_and_remove_call_arguments(value, variable_mapping):
     value = copy.deepcopy(value)
     replacer = NodeReplacer(variable_mapping=variable_mapping)

@@ -1,108 +1,746 @@
 {
   "_schema": {
-    "_comment": "Pi: the operation map (paper Sec 4.1, App A.1). Each normalized API identifier maps to an ordered list of operation records. A record's 'kind' selects how the extractor lowers it; 'arg' is the argument index carrying the operand (the selector), 'class' the event class in Sigma_sigma. This is a measured/authored table, keyed on (OS, host collector, runtime, library version); it never names a CVE. Kinds: http (target-view request under R*), spawn (process creation), file (host file I/O, mode-derived read/write), net (socket exchange), generic (object op via the type map).",
+    "_comment": "Pi: the operation map (paper Sec 4.1, App A.1). Each normalized API identifier maps to an ordered list of operation records. A record's 'kind' selects how the extractor lowers it; 'arg' is the argument index carrying the operand (the selector), 'class' the event class in Sigma_sigma. This is a measured/authored table, keyed on (OS, host collector, runtime, library version); it never names a CVE. An identifier ending in '()' is a call; one ending in '=' is an attribute (property) assignment, whose assigned value is the operand in slot 0. Kinds: http (target-view request under R*), spawn (process creation), file (host file I/O, mode-derived read/write), net (socket exchange), generic (object op via the type map).",
     "_kinds": {
       "http": "arg is the URL/path; class is read (GET/HEAD) or write (POST/PUT/DELETE/PATCH) as the collector records it",
       "spawn": "arg is the command/executable; emits a child process vertex under the acting subject",
       "file": "arg is the path; mode_arg (if present) picks read vs write, else 'class'",
       "net": "arg is the destination; class is send/receive/connect",
       "generic": "arg is the operand; 'syscall' names the type-map entry giving object type and direction"
+    },
+    "_fields": {
+      "arg": "argument index carrying the operand",
+      "kwarg": "keyword name carrying the operand, when the call takes it by name",
+      "mode_arg": "argument index of an open()-style mode string (file kind)",
+      "method_arg": "argument index of an explicit HTTP method literal (http kind)",
+      "peer": "net kind: true when the operand names the peer endpoint, false when it is payload",
+      "reg": "file kind: the path is a registry key, recorded under its hive",
+      "subject": "image the collector records as PERFORMING this operation, when the runtime carries it out inside a service process rather than in the caller's own. Absent means the acting subject (the runner). Collector-profile knowledge, not CVE knowledge: e.g. on Windows a UNC/WebDAV resource is dereferenced by the network redirector (WebClient / LanmanWorkstation), hosted in svchost.exe, so the outbound connection is recorded under the service host and not under the process that named the path."
     }
   },
-
-  "requests.get()":     [{"kind": "http", "class": "read",  "arg": 0}],
-  "requests.head()":    [{"kind": "http", "class": "read",  "arg": 0}],
-  "requests.options()": [{"kind": "http", "class": "read",  "arg": 0}],
-  "requests.post()":    [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.put()":     [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.patch()":   [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.delete()":  [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.request()": [{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
-
-  "requests.Session().get()":    [{"kind": "http", "class": "read",  "arg": 0}],
-  "requests.Session().head()":   [{"kind": "http", "class": "read",  "arg": 0}],
-  "requests.Session().post()":   [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.Session().put()":    [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.Session().patch()":  [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.Session().delete()": [{"kind": "http", "class": "write", "arg": 0}],
-  "requests.Session().request()":[{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
-
-  "httpx.get()":    [{"kind": "http", "class": "read",  "arg": 0}],
-  "httpx.head()":   [{"kind": "http", "class": "read",  "arg": 0}],
-  "httpx.post()":   [{"kind": "http", "class": "write", "arg": 0}],
-  "httpx.put()":    [{"kind": "http", "class": "write", "arg": 0}],
-  "httpx.patch()":  [{"kind": "http", "class": "write", "arg": 0}],
-  "httpx.delete()": [{"kind": "http", "class": "write", "arg": 0}],
-  "httpx.Client().get()":  [{"kind": "http", "class": "read",  "arg": 0}],
-  "httpx.Client().post()": [{"kind": "http", "class": "write", "arg": 0}],
-
-  "urllib.request.urlopen()":  [{"kind": "http", "class": "read", "arg": 0}],
-  "urllib.request.Request()":  [{"kind": "http", "class": "read", "arg": 0}],
-  "urllib2.urlopen()":         [{"kind": "http", "class": "read", "arg": 0}],
-  "http.client.HTTPConnection().request()":  [{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
-  "http.client.HTTPSConnection().request()": [{"kind": "http", "class": "write", "arg": 1, "method_arg": 0}],
-
-  "open()":         [{"kind": "file", "arg": 0, "mode_arg": 1}],
-  "io.open()":      [{"kind": "file", "arg": 0, "mode_arg": 1}],
-  "codecs.open()":  [{"kind": "file", "arg": 0, "mode_arg": 1}],
-  "os.open()":      [{"kind": "file", "arg": 0, "mode_arg": 1}],
-  "os.fdopen()":    [{"kind": "file", "arg": 0, "class": "write"}],
-  "pathlib.Path().open()":       [{"kind": "file", "arg": 0, "mode_arg": 0}],
-  "pathlib.Path().write_text()": [{"kind": "file", "arg": 0, "class": "write"}],
-  "pathlib.Path().write_bytes()":[{"kind": "file", "arg": 0, "class": "write"}],
-  "pathlib.Path().read_text()":  [{"kind": "file", "arg": 0, "class": "read"}],
-  "pathlib.Path().read_bytes()": [{"kind": "file", "arg": 0, "class": "read"}],
-
-  "os.remove()":  [{"kind": "generic", "syscall": "unlink", "arg": 0}],
-  "os.unlink()":  [{"kind": "generic", "syscall": "unlink", "arg": 0}],
-  "os.rename()":  [{"kind": "generic", "syscall": "rename", "arg": 1}],
-  "os.replace()": [{"kind": "generic", "syscall": "rename", "arg": 1}],
-  "os.chmod()":   [{"kind": "generic", "syscall": "chmod",  "arg": 0}],
-  "os.symlink()": [{"kind": "generic", "syscall": "symlink","arg": 1}],
-  "os.link()":    [{"kind": "generic", "syscall": "link",   "arg": 1}],
-  "os.mkdir()":   [{"kind": "generic", "syscall": "creat",  "arg": 0}],
-  "os.makedirs()":[{"kind": "generic", "syscall": "creat",  "arg": 0}],
-  "shutil.copy()":     [{"kind": "generic", "syscall": "write", "arg": 1}],
-  "shutil.copyfile()": [{"kind": "generic", "syscall": "write", "arg": 1}],
-  "shutil.copy2()":    [{"kind": "generic", "syscall": "write", "arg": 1}],
-  "shutil.move()":     [{"kind": "generic", "syscall": "rename","arg": 1}],
-  "shutil.rmtree()":   [{"kind": "generic", "syscall": "unlink","arg": 0}],
-
-  "subprocess.run()":          [{"kind": "spawn", "arg": 0}],
-  "subprocess.Popen()":        [{"kind": "spawn", "arg": 0}],
-  "subprocess.call()":         [{"kind": "spawn", "arg": 0}],
-  "subprocess.check_call()":   [{"kind": "spawn", "arg": 0}],
-  "subprocess.check_output()": [{"kind": "spawn", "arg": 0}],
-  "subprocess.getoutput()":        [{"kind": "spawn", "arg": 0}],
-  "subprocess.getstatusoutput()":  [{"kind": "spawn", "arg": 0}],
-  "os.system()":  [{"kind": "spawn", "arg": 0}],
-  "os.popen()":   [{"kind": "spawn", "arg": 0}],
-  "os.execv()":   [{"kind": "spawn", "arg": 0}],
-  "os.execve()":  [{"kind": "spawn", "arg": 0}],
-  "os.execvp()":  [{"kind": "spawn", "arg": 0}],
-  "os.spawnv()":  [{"kind": "spawn", "arg": 1}],
-  "os.spawnl()":  [{"kind": "spawn", "arg": 1}],
-  "pty.spawn()":  [{"kind": "spawn", "arg": 0}],
-
-  "socket.socket().connect()":  [{"kind": "net", "class": "connect", "arg": 0, "peer": true}],
-  "socket.socket().sendto()":   [{"kind": "net", "class": "send",    "arg": 1, "peer": true}],
-  "socket.socket().send()":     [{"kind": "net", "class": "send",    "peer": false}],
-  "socket.socket().sendall()":  [{"kind": "net", "class": "send",    "peer": false}],
-  "socket.socket().recv()":     [{"kind": "net", "class": "receive", "peer": false}],
-  "socket.socket().recvfrom()": [{"kind": "net", "class": "receive", "peer": false}],
-
-  "ftplib.FTP().storbinary()": [{"kind": "net", "class": "send",    "peer": false}],
-  "ftplib.FTP().storlines()":  [{"kind": "net", "class": "send",    "peer": false}],
-  "ftplib.FTP().retrbinary()": [{"kind": "net", "class": "receive", "peer": false}],
-  "ftplib.FTP().retrlines()":  [{"kind": "net", "class": "receive", "peer": false}],
-
-  "paramiko.SSHClient().exec_command()": [{"kind": "spawn", "arg": 0}],
-  "paramiko.SSHClient().open_sftp()":    [{"kind": "net", "class": "connect", "arg": 0}],
-
-  "input()":                                            [{"kind": "noop"}],
-  "sys.stdout.write()":                                 [{"kind": "noop"}],
-  "print()":                                            [{"kind": "noop"}],
-  "requests.packages.urllib3.disable_warnings()":       [{"kind": "noop"}],
-  "urllib3.disable_warnings()":                         [{"kind": "noop"}],
-  "argparse.ArgumentParser().print_help()":             [{"kind": "noop"}]
+  "requests.get()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "requests.head()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "requests.options()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "requests.post()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.put()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.patch()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.delete()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.request()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 1,
+      "method_arg": 0
+    }
+  ],
+  "requests.Session().get()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "requests.Session().head()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "requests.Session().post()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.Session().put()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.Session().patch()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.Session().delete()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "requests.Session().request()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 1,
+      "method_arg": 0
+    }
+  ],
+  "httpx.get()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "httpx.head()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "httpx.post()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "httpx.put()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "httpx.patch()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "httpx.delete()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "httpx.Client().get()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "httpx.Client().post()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "urllib.request.urlopen()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "urllib.request.Request()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "urllib2.urlopen()": [
+    {
+      "kind": "http",
+      "class": "read",
+      "arg": 0
+    }
+  ],
+  "http.client.HTTPConnection().request()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 1,
+      "method_arg": 0
+    }
+  ],
+  "http.client.HTTPSConnection().request()": [
+    {
+      "kind": "http",
+      "class": "write",
+      "arg": 1,
+      "method_arg": 0
+    }
+  ],
+  "open()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "mode_arg": 1
+    }
+  ],
+  "io.open()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "mode_arg": 1
+    }
+  ],
+  "codecs.open()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "mode_arg": 1
+    }
+  ],
+  "os.open()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "mode_arg": 1
+    }
+  ],
+  "os.fdopen()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "class": "write"
+    }
+  ],
+  "pathlib.Path().open()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "mode_arg": 0
+    }
+  ],
+  "pathlib.Path().write_text()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "class": "write"
+    }
+  ],
+  "pathlib.Path().write_bytes()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "class": "write"
+    }
+  ],
+  "pathlib.Path().read_text()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "class": "read"
+    }
+  ],
+  "pathlib.Path().read_bytes()": [
+    {
+      "kind": "file",
+      "arg": 0,
+      "class": "read"
+    }
+  ],
+  "os.remove()": [
+    {
+      "kind": "generic",
+      "syscall": "unlink",
+      "arg": 0
+    }
+  ],
+  "os.unlink()": [
+    {
+      "kind": "generic",
+      "syscall": "unlink",
+      "arg": 0
+    }
+  ],
+  "os.rename()": [
+    {
+      "kind": "generic",
+      "syscall": "rename",
+      "arg": 1
+    }
+  ],
+  "os.replace()": [
+    {
+      "kind": "generic",
+      "syscall": "rename",
+      "arg": 1
+    }
+  ],
+  "os.chmod()": [
+    {
+      "kind": "generic",
+      "syscall": "chmod",
+      "arg": 0
+    }
+  ],
+  "os.symlink()": [
+    {
+      "kind": "generic",
+      "syscall": "symlink",
+      "arg": 1
+    }
+  ],
+  "os.link()": [
+    {
+      "kind": "generic",
+      "syscall": "link",
+      "arg": 1
+    }
+  ],
+  "os.mkdir()": [
+    {
+      "kind": "generic",
+      "syscall": "creat",
+      "arg": 0
+    }
+  ],
+  "os.makedirs()": [
+    {
+      "kind": "generic",
+      "syscall": "creat",
+      "arg": 0
+    }
+  ],
+  "shutil.copy()": [
+    {
+      "kind": "generic",
+      "syscall": "write",
+      "arg": 1
+    }
+  ],
+  "shutil.copyfile()": [
+    {
+      "kind": "generic",
+      "syscall": "write",
+      "arg": 1
+    }
+  ],
+  "shutil.copy2()": [
+    {
+      "kind": "generic",
+      "syscall": "write",
+      "arg": 1
+    }
+  ],
+  "shutil.move()": [
+    {
+      "kind": "generic",
+      "syscall": "rename",
+      "arg": 1
+    }
+  ],
+  "shutil.rmtree()": [
+    {
+      "kind": "generic",
+      "syscall": "unlink",
+      "arg": 0
+    }
+  ],
+  "subprocess.run()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "subprocess.Popen()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "subprocess.call()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "subprocess.check_call()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "subprocess.check_output()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "subprocess.getoutput()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "subprocess.getstatusoutput()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "os.system()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "os.popen()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "os.execv()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "os.execve()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "os.execvp()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "os.spawnv()": [
+    {
+      "kind": "spawn",
+      "arg": 1
+    }
+  ],
+  "os.spawnl()": [
+    {
+      "kind": "spawn",
+      "arg": 1
+    }
+  ],
+  "pty.spawn()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "socket.socket().connect()": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0,
+      "peer": true
+    }
+  ],
+  "socket.socket().sendto()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "arg": 1,
+      "peer": true
+    }
+  ],
+  "socket.socket().send()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "peer": false
+    }
+  ],
+  "socket.socket().sendall()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "peer": false
+    }
+  ],
+  "socket.socket().recv()": [
+    {
+      "kind": "net",
+      "class": "receive",
+      "peer": false
+    }
+  ],
+  "socket.socket().recvfrom()": [
+    {
+      "kind": "net",
+      "class": "receive",
+      "peer": false
+    }
+  ],
+  "ftplib.FTP().storbinary()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "peer": false
+    }
+  ],
+  "ftplib.FTP().storlines()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "peer": false
+    }
+  ],
+  "ftplib.FTP().retrbinary()": [
+    {
+      "kind": "net",
+      "class": "receive",
+      "peer": false
+    }
+  ],
+  "ftplib.FTP().retrlines()": [
+    {
+      "kind": "net",
+      "class": "receive",
+      "peer": false
+    }
+  ],
+  "paramiko.SSHClient().exec_command()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "paramiko.SSHClient().open_sftp()": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0
+    }
+  ],
+  "input()": [
+    {
+      "kind": "noop"
+    }
+  ],
+  "sys.stdout.write()": [
+    {
+      "kind": "noop"
+    }
+  ],
+  "print()": [
+    {
+      "kind": "noop"
+    }
+  ],
+  "requests.packages.urllib3.disable_warnings()": [
+    {
+      "kind": "noop"
+    }
+  ],
+  "urllib3.disable_warnings()": [
+    {
+      "kind": "noop"
+    }
+  ],
+  "argparse.ArgumentParser().print_help()": [
+    {
+      "kind": "noop"
+    }
+  ],
+  "winreg.CreateKey()": [
+    {
+      "kind": "file",
+      "arg": 1,
+      "class": "write",
+      "reg": true
+    }
+  ],
+  "winreg.CreateKeyEx()": [
+    {
+      "kind": "file",
+      "arg": 1,
+      "class": "write",
+      "reg": true
+    }
+  ],
+  "winreg.SetValue()": [
+    {
+      "kind": "file",
+      "arg": 1,
+      "class": "write",
+      "reg": true
+    }
+  ],
+  "impacket.dcerpc.v5.epm.hept_map()": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0
+    }
+  ],
+  "impacket.dcerpc.v5.par.hRpcAsyncAddPrinterDriver()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "impacket.dcerpc.v5.rprn.hRpcAddPrinterDriverEx()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "epm.hept_map()": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0
+    }
+  ],
+  "par.hRpcAsyncAddPrinterDriver()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "rprn.hRpcAddPrinterDriverEx()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "kwarg": "pDriverContainer"
+    }
+  ],
+  "win32com.client.Dispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "win32com.client.DispatchEx()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "win32com.client.gencache.EnsureDispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "client.Dispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "client.DispatchEx()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "gencache.EnsureDispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "Dispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "DispatchEx()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "EnsureDispatch()": [
+    {
+      "kind": "spawn",
+      "arg": 0
+    }
+  ],
+  "SaveAs()": [
+    {
+      "kind": "file",
+      "class": "write",
+      "arg": 0
+    }
+  ],
+  "Send()": [
+    {
+      "kind": "net",
+      "class": "send",
+      "peer": false
+    }
+  ],
+  "ReminderSoundFile=": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0,
+      "peer": true,
+      "subject": "svchost.exe"
+    }
+  ],
+  "Outlook.AppointmentItem.ReminderSoundFile=": [
+    {
+      "kind": "net",
+      "class": "connect",
+      "arg": 0,
+      "peer": true,
+      "subject": "svchost.exe"
+    }
+  ]
 }

@@ -7,10 +7,9 @@ from collections import defaultdict
 
 
 def categorize_variable(node):
-    if isinstance(node, ast.Str):  # hardcoded string
+    if isinstance(node, ast.Str):
         return "no wildcard"
     elif isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        # Check for concatenation
         if isinstance(node.left, ast.Str) or isinstance(node.right, ast.Str):
             return "partial wildcard"
     return "fully wildcard"
@@ -29,9 +28,9 @@ def analyze_file(filename):
     try:
         tree = ast.parse(content)
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):  # variable assignment
+            if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Name):  # simple variable assignment
+                    if isinstance(target, ast.Name):
                         category = categorize_variable(node.value)
                         categories_count[category] += 1
     except SyntaxError:
@@ -46,7 +45,6 @@ grouped = df.groupby('CVE ID')
 filtered_df = df[df['CVE ID'].isin(grouped.filter(lambda x: len(x) > 1)['CVE ID'].unique())]
 
 grouped = filtered_df.groupby('CVE ID')
-# Choosing the first PoC directory for each CVE
 directories = [group['Foldername'].iloc[0] for _, group in grouped]
 
 global_count = {
