@@ -179,15 +179,7 @@ def run_batch(graphs_dir: Path, trace_align_path: Path, args) -> None:
     prov_graphs = list(prov_by_path.values())
 
     def build_model(sig_train, prov_train):
-        vocab = mod.build_count_vocab(list(sig_train) + list(prov_train))
-        node_types = sorted({d.get("type", "other") for G in (list(sig_train) + list(prov_train)) for _, d in G.nodes(data=True)} | {"other"})
-        edge_types = sorted({str(d.get("syscall", "other")) for G in (list(sig_train) + list(prov_train)) for _, _, d in G.edges(data=True)} | {"other"})
-        gspec = mod.GNNSpec(hidden=args.gnn_hidden, hash_dim=args.gnn_hash, layers=max(1, args.gnn_layers), seed=args.gnn_seed)
-        gnn = mod.RelationalGNN(node_types=node_types, edge_types=edge_types, spec=gspec)
-        feature_space = mod.FeatureSpace(vocab=vocab, gnn=gnn, counts_dim=vocab.size)
-        tspec = mod.TrainSpec(d=args.po_d, lr=args.train_lr, steps=args.train_steps, eps=args.po_eps, seed=args.train_seed)
-        encoder = mod.train_po_encoder(feature_space, list(sig_train), list(prov_train), tspec)
-        return feature_space, encoder
+        return mod.load_po_encoder()
 
     global_model = build_model(sig_graphs, prov_graphs)
     models_by_key = {}

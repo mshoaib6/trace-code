@@ -11,7 +11,7 @@ if _module_dir not in sys.path:
 from trace_align_io import parse_graph_txt, expand_paths, label_matches
 from trace_align_gnn import GNNSpec, RelationalGNN
 from trace_align_features import Vocab, build_count_vocab, FeatureSpace
-from trace_align_po import POEncoder, order_violation_energy, apo_score, TrainSpec, train_po_encoder
+from trace_align_po import POEncoder, order_violation_energy, apo_score, load_po_encoder
 from trace_align_align import process_centric_subgraphs, RefineSpec, AlignSpec, AlignResult, align_one, validation_suite
 from trace_align_score import ScoreSpec, classify_vertices, classify_label, match_score
 
@@ -43,17 +43,7 @@ def main() -> None:
     sig_graphs = [parse_graph_txt(p) for p in sig_paths]
     prov_graphs = [parse_graph_txt(p) for p in prov_paths]
 
-    vocab = build_count_vocab(list(sig_graphs) + list(prov_graphs))
-
-    node_types = sorted({d.get("type", "other") for G in (sig_graphs + prov_graphs) for _, d in G.nodes(data=True)} | {"other"})
-    edge_types = sorted({str(d.get("syscall", "other")) for G in (sig_graphs + prov_graphs) for _, _, d in G.edges(data=True)} | {"other"})
-    gspec = GNNSpec(hidden=args.gnn_hidden, hash_dim=args.gnn_hash, layers=max(1, args.gnn_layers), seed=args.gnn_seed)
-    gnn = RelationalGNN(node_types=node_types, edge_types=edge_types, spec=gspec)
-
-    feature_space = FeatureSpace(vocab=vocab, gnn=gnn, counts_dim=vocab.size)
-
-    tspec = TrainSpec(d=args.po_d, lr=args.train_lr, steps=args.train_steps, eps=args.po_eps, seed=args.train_seed)
-    encoder = train_po_encoder(feature_space, sig_graphs, prov_graphs, tspec)
+    feature_space, encoder = load_po_encoder()
 
     align_spec = AlignSpec(po_eps=args.po_eps, po_theta=args.po_theta, radius=args.radius,
                            refine=RefineSpec(k=args.k, max_depth=5), score=ScoreSpec(tau=args.tau))

@@ -203,21 +203,7 @@ def run(args) -> None:
     groups = capture_groups(provs)
 
     def build_model(sig_train, prov_train):
-        vocab = mod.build_count_vocab(list(sig_train) + list(prov_train))
-        node_types = sorted({d.get("type", "other")
-                             for G in (list(sig_train) + list(prov_train))
-                             for _, d in G.nodes(data=True)} | {"other"})
-        edge_types = sorted({str(d.get("syscall", "other"))
-                             for G in (list(sig_train) + list(prov_train))
-                             for _, _, d in G.edges(data=True)} | {"other"})
-        gspec = mod.GNNSpec(hidden=args.gnn_hidden, hash_dim=args.gnn_hash,
-                            layers=max(1, args.gnn_layers), seed=args.gnn_seed)
-        gnn = mod.RelationalGNN(node_types=node_types, edge_types=edge_types, spec=gspec)
-        feature_space = mod.FeatureSpace(vocab=vocab, gnn=gnn, counts_dim=vocab.size)
-        tspec = mod.TrainSpec(d=args.po_d, lr=args.train_lr, steps=args.train_steps,
-                              eps=args.po_eps, seed=args.train_seed)
-        return feature_space, mod.train_po_encoder(feature_space, list(sig_train),
-                                                   list(prov_train), tspec)
+        return mod.load_po_encoder()
 
     all_sigs = list(sig_by_path.values())
     all_provs = list(prov_by_cve.values())
