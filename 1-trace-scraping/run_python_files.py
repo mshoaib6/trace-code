@@ -33,7 +33,6 @@ def run_strace_on_folder(foldername, filename):
     subprocess.run(['docker', 'build', '-t', 'python-docker', '.'])
     try:
         print(foldername, '/', filename)
-        # output = subprocess.run(['docker', 'run', '--rm', 'python-docker:latest'], check=True, capture_output=True)
         child = subprocess.Popen(['docker', 'run', '--rm', 'python-docker:latest'], stdout=sys.stdout, stderr=sys.stderr)
         try:
             outs, errs = child.communicate(timeout=120)

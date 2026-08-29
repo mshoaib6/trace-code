@@ -78,7 +78,6 @@ def compute_stats():
     extensions.sort(key=lambda x: total_extensions[x], reverse=True)
     counts = [total_extensions[extension] for extension in extensions]
 
-    # cut down extensions for space on graph
     extensions_reduced = extensions[:20]
     extensions_reduced.append("Remaining")
     counts_reduced = counts[:20]
@@ -86,15 +85,6 @@ def compute_stats():
     counts_remainder = sum(counts[20:])
     counts_reduced.append(counts_remainder)
 
-    # fig = plt.figure(figsize = (20, 10))
-
-    # plt.bar(extensions_reduced, counts_reduced)
-    # plt.xlabel("Extension")
-    # plt.ylabel("Count of extension")
-    # plt.title("Count of different extension types in PoC's")
-    # plt.text(5, 3750, f"Remaining extensions: {extensions_remainder}", fontsize=10, wrap=True)
-    # plt.show()
-    # plt.savefig('result.png')
 
     df = pd.DataFrame()
     df['Extension'] = extensions_reduced
@@ -120,21 +110,17 @@ def compute_stats():
     fig2.savefig("figures/source-counts.pdf")
     fig2.clf()
 
-    # Create a new DataFrame to store the tag counts
     tag_counts = pd.DataFrame(total_results['Tags'].explode().value_counts()).reset_index()
 
-    # Rename the columns in the new DataFrame
     tag_counts.columns = ['Tag', 'Count']
     plot3 = sns.barplot(data=tag_counts, x="Tag", y="Count")
-    plot3.set_xticklabels(plot3.get_xticklabels(), rotation=45, ha='right')  # Rotate x-axis labels
-    plt.tight_layout()  # Adjust plot layout for better readability
+    plot3.set_xticklabels(plot3.get_xticklabels(), rotation=45, ha='right')
+    plt.tight_layout()
     fig3 = plot3.get_figure()
     fig3.savefig('figures/tag-counts.pdf')
 
     print(total_extensions)
     log(total_extensions)
-    # print(source_extensions)
-    # log(source_extensions)
     log("##########################################")
     log("")
     log("")

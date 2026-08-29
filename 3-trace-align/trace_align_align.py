@@ -62,44 +62,8 @@ def _node_compat(sig_node: str, prov_node: str, Gsig: nx.MultiDiGraph, Gprov: nx
     return label_matches(str(sd.get("label", "")), str(pd.get("label", "")))
 
 
-# ---------------------------------------------------------------------------
-# Request/response normalization
-#
-# read and write are two event classes, and for a filesystem edge the
-# difference is real: a dropper WRITING a payload and the payload later being
-# READ is a genuine ordering that a template is entitled to test.  For one
-# specific kind of edge the difference is not real at all.  When a service
-# handles an HTTP request, the collectors in this corpus record the whole
-# transaction as a single edge between the service process and the request
-# target, and they do not agree on its direction -- some record the service
-# reading the request target, some record it writing the response, and some
-# captures contain both directions for the same target.  Direction therefore
-# carries no information on a request/response edge, so read and write collapse
-# to one event class there, and only there.
-#
-# The scope is decided per edge from the vertices the edge touches, never from
-# which template is being matched.  Evidence that an object is a web resource
-# rather than a file on disk:
-#
-#   * its name carries a path segment that a web server executes to answer a
-#     request (.aspx, .jsp, .php, ...).  Such an object is a web resource
-#     wherever it happens to sit on disk, so this counts on either graph.
-#   * it is an HTTP request target: a rooted path, the origin-form that a
-#     request line carries.  On the template side a label is a pattern the
-#     compiler wrote from the exploit's request target, so a rooted pattern is
-#     a request target by construction.  On the provenance side a rooted path
-#     is just as likely an ordinary POSIX file, so it counts only for a service
-#     the capture shows being reached from the network -- the
-#     net -> process -> resource shape.
-#
-# Both endpoints of the comparison must show such evidence.  A template that
-# names an ordinary file, or a provenance edge that touches one, keeps read and
-# write apart.
-# ---------------------------------------------------------------------------
-
 _REQUEST_CLASSES = {"read", "write"}
 
-# Pages a web server executes to answer a request.
 _WEB_HANDLER_EXT = (
     ".asp", ".aspx", ".ashx", ".asmx", ".axd",
     ".jsp", ".jspx", ".jsf", ".do", ".action",
@@ -107,11 +71,8 @@ _WEB_HANDLER_EXT = (
     ".cgi", ".fcgi", ".cfm", ".cfc", ".vm",
 )
 
-# A header or metadata pseudo-object an HTTP-aware collector attaches to the
-# transaction rather than to a file, e.g. ``ua::curl/7.81.0``.
 _PSEUDO_OBJECT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_+.-]*::")
 
-# The edge a capture records when a remote peer reaches a service.
 _REMOTE_ACCESS = "access"
 
 
@@ -121,28 +82,16 @@ def _label_branches(label: str) -> List[str]:
 
 
 def _names_web_handler(branch: str) -> bool:
-    """True when a path segment of the name is a server-executed page."""
     head = branch.replace("\\", "/").split("?", 1)[0]
     return any(seg.strip("*").lower().endswith(_WEB_HANDLER_EXT) for seg in head.split("/"))
 
 
 def _is_request_target(branch: str) -> bool:
-    """True for an HTTP request target: the rooted origin-form path.
-
-    A leading wildcard is how a template writes "any scheme and authority", so
-    it is stripped first.  A backslash means the name is a Windows or UNC
-    filesystem path that merely happens to be rooted, not a request target.
-    """
     s = branch.lstrip("*")
     return s.startswith("/") and "\\" not in s
 
 
 def _process_and_object(G: nx.MultiDiGraph, u: str, v: str) -> Tuple[Optional[str], Optional[str]]:
-    """Orient one edge into (process endpoint, object endpoint).
-
-    Captures record a read either way round, so the endpoints are inspected in
-    both orders.
-    """
     for p, o in ((u, v), (v, u)):
         if G.nodes[p].get("type") == "process" and G.nodes[o].get("type") != "process":
             return p, o
@@ -150,13 +99,11 @@ def _process_and_object(G: nx.MultiDiGraph, u: str, v: str) -> Tuple[Optional[st
 
 
 def _reached_from_network(G: nx.MultiDiGraph, proc: str) -> bool:
-    """True when the capture shows a remote peer reaching this process."""
     return any(G.nodes[a].get("type") == "net" and str(d.get("syscall", "")) == _REMOTE_ACCESS
                for a, _, d in G.in_edges(proc, data=True))
 
 
 def _template_request_edge(Gsig: nx.MultiDiGraph, u: str, v: str) -> bool:
-    """True when a template edge is written against a web resource."""
     proc, obj = _process_and_object(Gsig, u, v)
     if obj is None:
         return False
@@ -165,7 +112,6 @@ def _template_request_edge(Gsig: nx.MultiDiGraph, u: str, v: str) -> bool:
 
 
 def _observed_request_edge(G: nx.MultiDiGraph, u: str, v: str) -> bool:
-    """True when a provenance edge records a web resource being served."""
     proc, obj = _process_and_object(G, u, v)
     if obj is None:
         return False
@@ -181,12 +127,6 @@ def _sc_eq(syscall_prov: str, syscall_sig: str,
            G: Optional[nx.MultiDiGraph] = None,
            u: Optional[str] = None, v: Optional[str] = None,
            template_request: bool = False) -> bool:
-    """Event-class match.
-
-    Exact, except that read and write are one class on a request/response edge
-    against a web resource -- which needs the template edge to be written
-    against one and the provenance edge to record one.
-    """
     if syscall_prov == syscall_sig:
         return True
     if not template_request or G is None:
@@ -204,37 +144,18 @@ def _iter_edges_by_syscall(G: nx.MultiDiGraph, src: str, syscall: str) -> List[T
     return hits
 
 
-# Classes that record one process creating another. A staging prefix is a
-# descendancy chain, so only these may precede a terminal occurrence.
 _PROCESS_CREATION = {"create", "spawn", "fork", "exec", "procstart"}
 
-# On by default: path refinement as specified -- a simple path of at most k
-# intermediate vertices whose terminal edge is of class sigma and whose every
-# preceding edge is a process creation. The alternative below accepts a
-# sigma-class edge anywhere along the path, with any intermediate class and
-# repeated vertices, which lets a template reach an object through activity
-# that has no relation to the subject it matched. Set TRACE_ALIGN_STRICT_PATH=0
-# to restore it.
 _STRICT_PATH = os.environ.get("TRACE_ALIGN_STRICT_PATH", "1") not in ("0", "false", "False")
 
 
 def _service_endpoints(G: nx.MultiDiGraph, proc: str) -> frozenset:
-    """The network endpoints a process is recorded serving on."""
     return frozenset(v for _, v, d in G.out_edges(proc, data=True)
                      if G.nodes.get(v, {}).get("type") == "net"
                      and str(d.get("syscall", "")) == "connect")
 
 
 def _same_service(G: nx.MultiDiGraph, u: str, w: str) -> bool:
-    """True when two process vertices are one service under two names.
-
-    A collector may record one server under several images -- a bare host name
-    and a fully qualified one, or one name per virtual host -- so a single
-    service's operations arrive split across process vertices. They are the same
-    service when the capture shows both serving the *same* network endpoint:
-    one listening socket cannot belong to two hosts. Crossing that identity is
-    not staging, so it does not consume a descendancy hop.
-    """
     if u == w:
         return False
     if G.nodes.get(u, {}).get("type") != "process" or G.nodes.get(w, {}).get("type") != "process":
@@ -245,42 +166,26 @@ def _same_service(G: nx.MultiDiGraph, u: str, w: str) -> bool:
 
 def _strict_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, k: int,
                  template_request: bool) -> bool:
-    """The specified refinement rule.
-
-    Each template edge takes a simple directed path of at most k intermediate
-    vertices whose terminal occurrence is of class sigma, every preceding edge a
-    process creation -- the prefix keeps the two matched entities' relation
-    intact by allowing staging only through subject-spawned processes.
-
-    Gapless classes have no prefix at all: an edge *into* the subject, such as
-    an inbound protocol record, has no incoming descendancy to stage through,
-    so its path is the terminal occurrence alone.
-    """
     def terminal(u, v):
         return any(_sc_eq(str(d.get("syscall", "")), syscall, G, u, v, template_request)
                    for _, w, d in G.out_edges(u, data=True) if w == v)
 
-    # The subject may be recorded under more than one image; an alias serving
-    # the same endpoint is the same subject, not a staging hop.
     origins = [src] + [w for w in G.nodes if _same_service(G, src, w)]
     if any(terminal(o, dst) for o in origins):
         return True
-    # An edge into the subject has no incoming descendancy to stage through.
     if (G.nodes.get(dst, {}).get("type") == "process"
             and G.nodes.get(src, {}).get("type") != "process"):
         return False
 
-    # Walk descendancy chains of at most k intermediate vertices, then require
-    # the terminal occurrence out of the vertex the chain reached.
     frontier = [(o, {o}) for o in origins]
     for _ in range(k):
         nxt = []
         for u, seen in frontier:
             for _, w, d in G.out_edges(u, data=True):
                 if w in seen:
-                    continue              # simple path: no repeated vertex
+                    continue
                 if str(d.get("syscall", "")) not in _PROCESS_CREATION:
-                    continue              # a prefix edge must be a creation
+                    continue
                 if terminal(w, dst):
                     return True
                 nxt.append((w, seen | {w}))
@@ -296,8 +201,6 @@ def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, 
         return True
     if _STRICT_PATH:
         return _strict_path(G, src, dst, syscall, k, template_request)
-    # A template edge may span at most k intermediate vertices, and no search
-    # runs deeper than the refinement depth bound d_max.
     max_len = min(k + 1, max_depth)
     from collections import deque
     q = deque([(src, 0, False)])
@@ -353,10 +256,6 @@ def refine_alignment(Gsig: nx.MultiDiGraph,
                     return False
         return True
 
-    # Every template vertex must find a counterpart: refinement is seeded from
-    # the high-confidence vertices and expands until the whole template is
-    # mapped, so a template vertex with no consistent counterpart means the
-    # candidate subgraph does not contain the template.
     if any(not cand_map[sn] for sn in sig_nodes):
         if verbose:
             print("  [refine] a template vertex has no compatible counterpart")
@@ -414,8 +313,6 @@ def align_one(Gsig: nx.MultiDiGraph,
         z_p = encoder.embed(feature_space.vectorize(H))
         E = order_violation_energy(z_sig, z_p)
         s = apo_score(z_sig, z_p, eps=spec.po_eps)
-        # Screen admits a candidate when the order-violation energy is within
-        # the margin; the score then ranks the survivors.
         if E <= spec.po_eps and s >= spec.po_theta:
             candidates.append((proc, s, E))
 
@@ -424,8 +321,6 @@ def align_one(Gsig: nx.MultiDiGraph,
     if verbose:
         print(f"[stage1] candidates passing PO screen: {len(candidates)}/{len(proc_subs)}")
 
-    # The confidence-weighted match score gates the alert; it is used here and
-    # never surfaced, since only the alert decision is meaningful downstream.
     for proc, s, E in candidates:
         ok, mapping = refine_alignment(Gsig, proc_subs[proc], spec.refine, verbose=verbose, kappa=kappa)
         if not ok:

@@ -1,11 +1,3 @@
-"""Run stage 2 on every poc_splunk/*.py and collect sig-*.txt graphs.
-
-For each PoC, stage 2 may emit multiple path-variant graphs; we keep the largest
-(most edges) as the canonical sig, mirroring how the paper's stage-2 evaluation
-selects the richest variant per CVE.
-
-Output: sig_splunk/sig-CVE-*.txt  (stage-3-ready NODE/EDGE format).
-"""
 from __future__ import annotations
 
 import os
@@ -22,7 +14,6 @@ SIG_DIR = HERE / "sig_splunk"
 
 
 def _pick_richest(graph_files):
-    """Pick the graph variant with the most EDGE lines; break ties by most NODE lines."""
     best = None
     best_score = (-1, -1)
     for p in graph_files:
@@ -41,7 +32,6 @@ def main() -> int:
     summary = []
     for poc in sorted(POC_DIR.glob("CVE-*.py")):
         cve = poc.stem
-        # Wipe prior graphs/ output so each PoC starts clean.
         if TMP_OUT.exists():
             for f in TMP_OUT.glob("graph-*"):
                 f.unlink()
@@ -63,8 +53,6 @@ def main() -> int:
         text = chosen.read_text()
         n_edges = text.count("\nEDGE ") + (1 if text.startswith("EDGE ") else 0)
         n_nodes = text.count("\nNODE ") + (1 if text.startswith("NODE ") else 0)
-        # Reject vacuous sigs (just the base process, no edges): they would
-        # match every prov and blow up the false-positive rate.
         if n_edges == 0:
             summary.append((cve, n_nodes, n_edges, "REJECTED (0 edges, PoC has no log-evident anchor)"))
             continue

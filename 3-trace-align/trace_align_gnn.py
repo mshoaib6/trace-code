@@ -44,20 +44,10 @@ class RelationalGNN:
             })
 
     def _hash_label(self, label: str) -> np.ndarray:
-        """Bag-of-tokens hash of a vertex label.
-
-        Labels are split into tokens and each token is hashed into a fixed
-        number of buckets. Tokens that cannot be predefined (wildcards,
-        argv/url/payload placeholders) contribute nothing, and a label offering
-        alternatives requires none of them, so a template label never demands a
-        feature its matching provenance label lacks. This keeps the embedding
-        monotone under containment, which the partial-order screen relies on.
-        """
         v = np.zeros(self.spec.hash_dim, dtype=float)
         s = (label or "").strip()
         if not s:
             return v
-        # A disjunction constrains nothing on its own.
         if "|" in s:
             return v
         low = s.lower()

@@ -156,7 +156,6 @@ class TreeSplitter(ast.NodeVisitor):
                 tree_if, mapping_if, tree_else, mapping_else = copy_tree(tree, mapping)
                 if node in mapping_if:
                     if_mapped_node = mapping_if[node]
-                    # TODO: This may need to be changed if the code forks
                     tree_if.body.append(ast.Expr(if_mapped_node.test))
                     tree_if = replace_node(tree_if, if_mapped_node, if_mapped_node.body)
                     new_trees.append(tree_if)
@@ -226,13 +225,11 @@ def cleanup_trees(trees):
             unique_trees.append(tree)
     return unique_trees
 
-_SPLIT_BUDGET = 256  # hard stop on path-variant enumeration to avoid 2^N blow-ups
+_SPLIT_BUDGET = 256
 
 
 def split_tree(tree):
     splitter = TreeSplitter(tree)
-    # Monkey-patch: abort further branching once we hit the budget so a PoC
-    # with dozens of conditionals doesn't allocate gigabytes of AST copies.
     orig_visit = splitter.visit
 
     def _bounded_visit(node):

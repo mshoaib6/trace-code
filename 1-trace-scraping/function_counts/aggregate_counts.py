@@ -2,13 +2,6 @@ import pickle
 import pandas as pd
 import os
 
-# data = {
-#     'function_calls': function_calls,
-#     'total': total,
-#     'failed': failed,
-#     'python2': python2,
-#     'failed_dirs': failed_dirs
-# }   
 
 total = 0
 failed = 0

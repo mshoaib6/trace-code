@@ -46,7 +46,6 @@ def main():
             if len(results) % 100 == 0:
                 print(f"Processed {len(results)} links")
     
-    # Flatten the results and filter out empty entries
     flat_results = {k: v for d in results for k, v in d.items() if v}
     df = pd.DataFrame(list(flat_results.items()), columns=['Rule URL', 'CVEs'])
     df.to_csv('forti_rules.csv', index=False)

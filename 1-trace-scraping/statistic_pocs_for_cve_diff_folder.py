@@ -33,25 +33,21 @@ for group in group_array:
         foldername = os.path.join('total-folder', member['Foldername'])
         print(foldername)
         
-        # Get the file extensions in the directory
         extensions = get_file_extensions(foldername)
         
         cve_languages[cve_id].append(extensions)
 
-# Print the results and perform differential analysis
 for cve_id, languages_list in cve_languages.items():
     print(f"\nCVE ID: {cve_id}")
     for i, languages in enumerate(languages_list):
         print(f"Folder {i+1}: {', '.join([f'{k}: {v}' for k, v in languages.items()])}")
 
-    # Perform differential analysis between the folders
     if len(languages_list) > 1:
         diff = set(languages_list[0].keys()) ^ set(languages_list[1].keys())
         common = set(languages_list[0].keys()) & set(languages_list[1].keys())
         print(f"Differential Analysis: Different languages used: {', '.join(diff)}")
         print(f"Common languages used: {', '.join(common)}")
 
-# Calculate the distribution statistics
 total_ext_counts = []
 
 for cve_id, languages_list in cve_languages.items():
@@ -60,7 +56,6 @@ for cve_id, languages_list in cve_languages.items():
         unique_exts.update(lang_dict.keys())
     total_ext_counts.append(len(unique_exts))
 
-# Using pandas for statistical calculations
 stat_series = pd.Series(total_ext_counts)
 
 mean_count = stat_series.mean()
@@ -74,7 +69,6 @@ print(f"Median: {median_count}")
 print(f"Min: {min_count}")
 print(f"Max: {max_count}")
 
-# Aggregate all file extensions for differential and common analysis
 all_diff_extensions = []
 all_common_extensions = []
 
@@ -85,17 +79,13 @@ for cve_id, languages_list in cve_languages.items():
         all_diff_extensions.extend(list(diff))
         all_common_extensions.extend(list(common))
 
-# Count occurrences for differential and common extensions
 diff_counter = Counter(all_diff_extensions)
 common_counter = Counter(all_common_extensions)
 
-# Top 10 differential extensions
 top_10_diff = diff_counter.most_common(10)
 
-# Top 10 common extensions
 top_10_common = common_counter.most_common(10)
 
-# Print results
 print("\nTop 10 Differential Extensions:")
 for ext, count in top_10_diff:
     print(f"{ext}: {count} times")

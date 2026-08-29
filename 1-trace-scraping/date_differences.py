@@ -16,11 +16,9 @@ def compute_differences():
     df['Difference'] = dates
     df['Score'] = df['Score'].astype('float')
 
-    df = df.dropna(subset=['Score']) #many CVEs have no score, drop these rows
+    df = df.dropna(subset=['Score'])
 
     ax = df.plot.scatter(x='Score', y='Difference')
-    # Source: https://python-graph-gallery.com/scatterplot-with-regression-fit-in-matplotlib/
-    # Matplotlib scatter plot
     x = df['Score']
     y = df['Difference']
     b, a = np.polyfit(x, y, deg=1)
@@ -32,9 +30,7 @@ def compute_differences():
     plt.savefig('figures/difference-score-scatter.pdf')
     plt.clf()
 
-    # This line filters out negative differences, remove it if all differences should be considered
     df = df[df['Difference'] >= 0]
-    # This line filters out differences greater than 365, remove it if larger differences should be considered
     df = df[df['Difference'] <= 365]
 
     df_sorted = df.sort_values('Difference')
@@ -83,7 +79,6 @@ def compute_differences():
 
     ax = filtered.boxplot(column='Difference', by='CVE-Year')
     plt.xlabel('CVE Year')
-    # plt.ylabel(f'Difference between CVE Publish Date and PoC publish date')
     plt.savefig('figures/filtered_differences.pdf')
     plt.clf()
 

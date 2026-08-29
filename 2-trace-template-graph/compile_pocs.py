@@ -1,7 +1,3 @@
-"""Run stage 2 over every PoC and collect one sig-*.txt template per CVE.
-
-Usage:  python3 compile_pocs.py <poc_dir> <out_dir>
-"""
 from __future__ import annotations
 
 import shutil
@@ -14,7 +10,6 @@ TMP = HERE / "graphs"
 
 
 def _richest(paths):
-    """The variant with the most EDGE lines; ties broken by most NODE lines."""
     best, best_score = None, (-1, -1)
     for p in paths:
         text = p.read_text(encoding="utf-8")
@@ -26,7 +21,6 @@ def _richest(paths):
 
 
 def _compile(poc: Path, san: Path, keep_call_chain: bool):
-    """Sanitize then compile one PoC; return the richest graph variant or None."""
     cmd = [sys.executable, "sanitize_poc.py", str(poc), "--out", str(san)]
     if keep_call_chain:
         cmd.append("--keep-call-chain")

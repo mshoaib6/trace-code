@@ -11,7 +11,6 @@ def compute_differences():
     df['Difference'] = dates
     df['Score'] = df['Score'].astype('float')
 
-    # Calculate PoC severity counts
     low_severity = df[(df['Score'] >= 0) & (df['Score'] <= 3)]
     medium_severity = df[(df['Score'] > 3) & (df['Score'] <= 6)]
     high_severity = df[(df['Score'] > 6) & (df['Score'] <= 10)]
@@ -30,7 +29,6 @@ def compute_differences():
     print(f"Medium Severity PoCs: {medium_count} ({medium_percentage:.2f}%)")
     print(f"High Severity PoCs: {high_count} ({high_percentage:.2f}%)")
 
-    # Scatter plot and regression line
     ax = df.plot.scatter(x='Score', y='Difference')
     x = df['Score']
     y = df['Difference']
@@ -43,7 +41,6 @@ def compute_differences():
     plt.savefig('figures/difference-score-scatter.pdf')
     plt.clf()
 
-    # Filter out negative and too large differences
     df = df[df['Difference'] >= 0]
     df = df[df['Difference'] <= 365]
 

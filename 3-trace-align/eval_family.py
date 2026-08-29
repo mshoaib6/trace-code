@@ -1,31 +1,3 @@
-#!/usr/bin/env python3
-"""Grade compiled template *families* against provenance graphs.
-
-`trace_batch_run.py` pairs one signature with one provenance graph. Stage 2,
-though, emits a family of templates per PoC (branch variants, anchor splits,
-and -- since the locus is inferred, not known -- both the runner-side and
-target-side readings), and `compile_pocs.py` keeps only the richest member.
-The paper's grade counts a CVE as detected when *any* family member satisfies
-the alert predicate, so this runner evaluates the whole family:
-
-  detected(CVE)      := any variant of CVE aligns against prov-CVE
-  false alert(A, B)  := any variant of A aligns against prov-B, for B a
-                        different capture from A
-
-Reporting both matters. Widening the family can only raise detection, so the
-detection number alone is not evidence of anything; the cross-CVE alert count
-under the *same* widened family is what says whether the extra members are
-discriminative or merely permissive.
-
-Encoder training mirrors `trace_batch_run.py`: one leave-one-CVE-out model per
-CVE, trained on the other CVEs' family members and provenance graphs, so a
-template is never scored by an encoder that saw it.
-
-Usage:
-  python3 eval_family.py --family_dir DIR --prov_dir D [D ...] [--all_pairs]
-
-Family members are `sig-<CVE>--<NN>.txt`; provenance graphs are `prov-<CVE>.txt`.
-"""
 
 from __future__ import annotations
 
@@ -66,7 +38,7 @@ def load_trace_align_module(path: Path):
         raise RuntimeError(f"Could not import trace_align from: {path}")
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)  # type: ignore
+    spec.loader.exec_module(mod)
     return mod
 
 
@@ -99,18 +71,10 @@ def discover_prov(prov_dirs: List[Path]) -> Dict[str, Path]:
 
 
 def capture_groups(provs: Dict[str, Path]) -> Dict[str, str]:
-    """CVEs sharing a byte-identical capture are one co-exercised bundle.
-
-    Some vendor bundles publish a single capture that exercises several CVEs at
-    once (the four Junos J-Web CVEs are one such chain). A pair drawn from
-    inside such a group compares a capture against itself, not two different
-    CVEs, so it is not a cross-CVE comparison.
-    """
     return {cve: hashlib.md5(p.read_bytes()).hexdigest() for cve, p in provs.items()}
 
 
 def _restrict(members: List[Path], manifest: Optional[dict], args) -> List[Path]:
-    """Apply the family-axis ablation flags to one CVE's members."""
     if manifest is None:
         return members
     by_file = {e["file"]: e for e in manifest}
@@ -134,7 +98,6 @@ def _restrict(members: List[Path], manifest: Optional[dict], args) -> List[Path]
 
 
 def _label_branches(G):
-    """Every concrete label branch a template family names."""
     out = set()
     for _, d in G.nodes(data=True):
         for br in str(d.get("label", "")).split("|"):
@@ -146,18 +109,6 @@ def _label_branches(G):
 
 
 def shared_surfaces(family, sig_by_path):
-    """CVE pairs whose templates name a common request endpoint.
-
-    Two CVEs can be exploited through the same resource -- a bypass of an
-    earlier CVE reaches the endpoint the first one reached, and a later flaw in
-    the same handler is requested at the same path. When both PoCs request it,
-    a template for one matching the other's capture is a correct observation
-    about its own behaviour, not a confusion between unrelated products.
-
-    A pair counts when a concrete label branch of one is a path-suffix of a
-    branch of the other, so /api/v2/authorized/users pairs with
-    /mifs/aad/api/v2/authorized/users while unrelated endpoints do not.
-    """
     labels = {cve: _label_branches_of(ms, sig_by_path) for cve, ms in family.items()}
     pairs = set()
     for a in labels:
@@ -180,8 +131,8 @@ def _label_branches_of(members, sig_by_path):
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description="Grade compiled template families against provenance graphs.")
     ap.add_argument("--family_dir", required=True,
                     help="Directory of sig-<CVE>--<NN>.txt family members (from compile_pocs_family.py).")
     ap.add_argument("--prov_dir", nargs="+", required=True,
@@ -193,7 +144,6 @@ def main() -> None:
     ap.add_argument("--out", default="",
                     help="Tee stdout to this file (default: eval_family[-all_pairs].txt).")
 
-    # Family-axis ablation (needs manifest.json in --family_dir).
     ap.add_argument("--locus", nargs="*", default=None, choices=["local", "remote"],
                     help="Restrict the family to these loci.")
     ap.add_argument("--san", nargs="*", default=None, choices=["plain", "keep-call-chain"],

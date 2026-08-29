@@ -13,7 +13,6 @@ df = pd.read_pickle("total_results.pkl")
 grouped = df.groupby('CVE ID')
 filtered_df = df[df['CVE ID'].isin(grouped.filter(lambda x: len(x) > 1)['CVE ID'].unique())]
 
-# print(filtered_df[['CVE ID', 'Foldername']].sort_values(by = 'CVE ID'))
 
 directories = filtered_df['Foldername'].tolist()
 grouped = filtered_df.groupby('CVE ID')
@@ -80,24 +79,7 @@ for group in group_array:
             print("Bad parse")
             continue
         similarity = pycode_similar.detect([reference, remaining], diff_method=pycode_similar.TreeDiff, keep_prints=False, module_level=True)
-        #     except SyntaxError:
-        #             autopep8.fix_code(reference)
-        #             autopep8.fix_code(remaining)
-        #             fixer_names = refactor.get_fixers_from_package('lib2to3.fixes')
-        #             fixer = refactor.RefactoringTool(fixer_names)
-        #             data = str(fixer.refactor_string(data, filename))
-        #             similarity = pycode_similar.detect([reference, remaining], diff_method=pycode_similar.TreeDiff, keep_prints=False, module_level=True)
-        # except TabError:
-        #     normalized_code = autopep8.fix_code(reference)
-        #     normalized_code = autopep8.fix_code(remaining)
-        #     similarity = pycode_similar.detect([reference, remaining], diff_method=pycode_similar.TreeDiff, keep_prints=False, module_level=True)
         results.append(similarity[0][1][0].plagiarism_percent)
-        # if (similarity[0][1][0].plagiarism_percent > 0.8 and similarity[0][1][0].plagiarism_percent < 0.95):
-        #     print(similarity[0][1][0])
-        #     print("reference\n\n", reference)
-        #     print("\n\n\n\n")
-        #     print("remaining:\n\n", remaining)
-        #     exit(0)
         total_results.extend(results)
     print(results)
 

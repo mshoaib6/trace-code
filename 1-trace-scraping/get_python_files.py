@@ -30,13 +30,10 @@ def get_python_files():
     print("indices: ", array_index * length, (array_index + 1) * length)
     directories = directories[array_index * length:(array_index + 1) * length]
 
-    # parse_file('total-folder/poc-in-gh/poc-in-gh-3030/cve-2019-2725.py', function_calls)
 
     for dir in directories:
         filenames.append(glob.glob(os.path.join("total_folder", dir, '*.py'), recursive=False))
     
-    # if not os.path.exists("python-filenames"):
-    #     os.makedirs("python-filenames")
     
     output_file = os.path.join('python-filenames', f'pfa-{array_index}.pkl')
     

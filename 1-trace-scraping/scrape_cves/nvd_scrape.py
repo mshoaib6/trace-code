@@ -1,5 +1,3 @@
-# %%
-# Scrape CVEs (just ids and years) for last 5 years from NVD database
 
 import requests
 from bs4 import BeautifulSoup
@@ -8,17 +6,15 @@ import pandas as pd
 import os
 from datetime import datetime, timedelta
 
-#URL to NVD's CVE database
 BASE_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0/"
 API_KEY = os.environ.get("NVD_API_KEY", "")
 START_YEAR = 2019
-END_YEAR = 2026 #exclusive
+END_YEAR = 2026
 
 
 def get_any_cvss_score(cve):
     metrics = cve.get("metrics", {})
 
-    # Priority: V4 → V3.1 → V3.0 → V2
     for key in ["cvssMetricV40", "cvssMetricV31", "cvssMetricV30", "cvssMetricV2"]:
         if key in metrics and len(metrics[key]) > 0:
             entry = metrics[key][0]
@@ -29,9 +25,6 @@ def get_any_cvss_score(cve):
 
 
 def fetch_cves(start_date, end_date):
-    """
-    Fetch CVEs between two datetimes (ISO8601 with ms).
-    """
     headers = {
     "apiKey": API_KEY
     }
@@ -72,9 +65,6 @@ def fetch_cves(start_date, end_date):
 
 
 def fetch_year(year):
-    """
-    Fetch CVEs for an entire year by chunking into <=120 day ranges.
-    """
     results = []
     start = datetime(year, 1, 1)
     end = datetime(year + 1, 1, 1)
@@ -92,7 +82,7 @@ def cve_scrape():
 
     filepath = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'cves.csv'))
 
-    if os.path.isfile(filepath) and os.path.getsize(filepath) > 1000:  # adjust threshold if needed
+    if os.path.isfile(filepath) and os.path.getsize(filepath) > 1000:
         print("CVE data already collected, moving on...")
         return
     

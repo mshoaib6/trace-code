@@ -7,7 +7,6 @@ from node import Node
 import os
 
 def _http_class_from_method(method_raw):
-    """read/write from an explicit HTTP method literal (default write)."""
     import re as _re
     m = _re.search(r"""['"]([A-Za-z]+)['"]""", str(method_raw))
     if m and m.group(1).upper() in ("GET", "HEAD", "OPTIONS"):
@@ -16,40 +15,15 @@ def _http_class_from_method(method_raw):
 
 
 def _http_path_label(raw):
-    """Extract the target path+query from an HTTP call's first argument.
-
-    ``raw`` is the ast-unparsed argument, e.g. ``base_url + '/a/b?x=0'`` or
-    ``'http://host/a/b'``. We recover the first string literal beginning with a
-    slash: that is the path the target's own log records.
-
-    Wildcards are added only where the source says the value is uncertain, so
-    each one is derived from the PoC rather than chosen per CVE:
-
-    * trailing ``*`` always -- a target logs the query string and any suffix the
-      PoC appends at run time, which the literal does not fix.
-    * leading ``*`` only when the URL is built on a *variable* base
-      (``base_url + '/a/b'``). Then the application's mount prefix is unknown to
-      the PoC, and the target may record ``/wiki/a/b`` or ``/..;/a/b``. A URL
-      written as one complete literal fixes the whole path, so it gets none.
-
-    Returns None if no path literal exists.
-    """
     import re as _re
     s = str(raw)
-    # Scan the string literals in the expression; the request path lives in one.
     for m in _re.finditer(r"""(['"])((?:[^'"\\]|\\.)*)\1""", s):
         inner = m.group(2)
-        # A complete URL ("http://host/path?q"): the literal fixes the whole
-        # path, so no leading prefix is missing.
         u = _re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+(/.*)$", inner)
         if u:
             return u.group(1) + "*"
-        # A URL literal with no path ("http://h") carries no resource; skip it.
         if "://" in inner:
             continue
-        # A path appearing in the literal ("/path", or "{base}/path" in an
-        # f-string): the mount prefix is unknown, so tolerate both ends. Require
-        # a single leading slash so a stray "//" is not read as a path.
         p = _re.search(r"(/[^/\s][^\s]*)$", inner)
         if p:
             return "*" + p.group(1) + "*"
@@ -57,15 +31,6 @@ def _http_path_label(raw):
 
 
 def _http_resource_label(raw):
-    r"""Label for the request a URL expression denotes.
-
-    Folds the expression (so a URL assembled from literals and variables keeps
-    each concrete run and wildcards the rest -- ``base + '?command=zip' + p +
-    'INCLUDE'`` -> ``*command=zip*INCLUDE*``), decodes escapes, and strips a
-    leading ``scheme://host`` so only the path+query the target records remains.
-    A query-only anchor (``PHPRC=``) is kept even without a leading slash, since
-    collectors log the whole request line. Returns None if nothing is fixed.
-    """
     import re as _re
     folded = _fold_str(raw)
     if folded is None:
@@ -82,13 +47,9 @@ def _http_resource_label(raw):
 
 
 def _http_endpoint_label(raw):
-    """Peer label for a local-locus request (delivery): the URL's distinctive
-    path/query, which occurs in the endpoint the trace records."""
     return _http_resource_label(raw)
 
 
-# Path segments too generic to serve as a coarse endpoint anchor on their own:
-# an attacker-host graph names the peer by the service, not a common route word.
 _GENERIC_SEG = {
     "api", "v1", "v2", "v3", "admin", "login", "logout", "index", "home",
     "user", "users", "app", "apps", "web", "cgi", "rest", "public", "static",
@@ -97,22 +58,11 @@ _GENERIC_SEG = {
 
 
 def _coarse_peer_alts(resource, url):
-    r"""Alternative endpoint labels an attacker-host graph may have recorded.
-
-    A local-locus request logs on the runner as an outbound *connection*, and
-    such a graph names the peer by the reachable endpoint -- which may be the
-    full request path (``/bonita/API/pageUpload``), just the distinctive service
-    prefix (``/bonita``, as ``http://host:8080/bonita``), or the ``host:port``
-    when a service port is distinctive (``127.0.0.1:9200``). The exact form is a
-    collector convention the PoC does not fix, so the peer label offers each as
-    a ``|`` alternative (which only loosens this one node; structure still binds).
-    Returns a list beginning with the full resource label.
-    """
     import re as _re
     alts = [resource] if resource else []
     if resource:
         core = resource.strip("*")
-        prefix = core.split("*", 1)[0]              # literal path before any query merge
+        prefix = core.split("*", 1)[0]
         segs = [s for s in prefix.split("/") if s]
         if segs:
             first = segs[0]
@@ -122,8 +72,6 @@ def _coarse_peer_alts(resource, url):
                 alts.append(coarse)
     folded = _fold_str(url) if url is not None else None
     if folded:
-        # Explicit service port, even when the host folded to a wildcard
-        # (http://*:9200/...): the port itself is the distinctive anchor.
         m = _re.search(r"://[^/\s]*?:(\d{2,5})", folded)
         if m and m.group(1) not in ("80", "443", "8080", "8000"):
             port_alt = "*:" + m.group(1) + "*"
@@ -133,19 +81,6 @@ def _coarse_peer_alts(resource, url):
 
 
 def _query_body_anchor(kwargs):
-    r"""Concrete QUERY parameters a request carries, as ``name=value`` tokens
-    joined by wildcards.
-
-    Only ``params=`` is used: it becomes the URL query string, which the
-    request-line a network/access-log collector records contains
-    (``requests.get(u, params={'rest_route': '/pmpro/v1/order'})`` is logged as
-    ``?rest_route=/pmpro/v1/order``). ``data=``/``json=`` ride in the request
-    BODY, which those collectors do not log, so appending them would make the
-    resource label stricter than the trace (e.g. F5's command lives in the JSON
-    body, absent from the recorded ``/mgmt/tm/util/bash`` path). Each concrete
-    string value is kept; a non-literal (payload variable) becomes ``name=*``.
-    Returns a ``*a=x*b=y*`` fragment, or None if nothing concrete is present.
-    """
     import ast as _ast
     toks = []
     for key in ("params",):
@@ -172,16 +107,6 @@ def _query_body_anchor(kwargs):
 
 
 def _path_valued_param(kwargs):
-    r"""A resource path carried by a request *parameter* rather than the URL.
-
-    Some requests name the resource they act on in a parameter whose value is
-    itself a path (ColdFusion's admin login posts
-    ``requestedURL=/CFIDE/administrator/index.cfm``). The target then serves and
-    records that resource, so when the request line itself fixes no path this
-    parameter names the anchor. Only a value that is literally a URL path is
-    used -- never an arbitrary payload -- so this cannot invent an endpoint.
-    Returns ``*<path>*`` or None.
-    """
     import ast as _ast, re as _re
     for key in ("params", "data", "json"):
         raw = kwargs.get(key)
@@ -202,7 +127,6 @@ def _path_valued_param(kwargs):
 
 
 def _merge_query(path, query):
-    """Append a query/body anchor fragment to a resource/endpoint label."""
     if query is None:
         return path
     if path is None:
@@ -211,15 +135,6 @@ def _merge_query(path, query):
 
 
 def _value_wildcarded(label):
-    r"""A twin of a resource label with volatile query VALUES wildcarded.
-
-    A parameter's name is the discriminator; its value may be a per-exploit
-    artifact the trace records differently (``PHPRC=/dev/fd/0`` in the PoC vs
-    ``PHPRC=/var/tmp/evilfileof.ini`` in the log). Wildcard a value that looks
-    volatile -- a path (contains ``/``) or a long token -- while keeping a short
-    fixed token (``setupComplete=0``) that is itself discriminating. Returns the
-    wildcarded label, or None if nothing changed.
-    """
     import re as _re
     changed = [False]
 
@@ -235,60 +150,25 @@ def _value_wildcarded(label):
 
 
 def _pins_a_name(rung):
-    r"""True when a label fixes some whole name, not merely the start of one.
-
-    A label identifies an artifact only through the parts of a name it fixes
-    *end to end*. Two things qualify: a path component delimited by separators
-    on both sides (``*/App_Extensions/*`` fixes ``App_Extensions``), and a
-    complete file name -- a stem together with its extension (``*sessions.obj*``,
-    ``*/human2.aspx*``).
-
-    Text that is only the head of a name pins nothing: ``*/wordpress*`` matches
-    every name that merely begins that way, at any depth, so it names a place
-    rather than an artifact. A bare extension pins nothing either -- it is a
-    stem-less tail, and an extension is a file FORMAT, which every product has
-    files of. Text taken from the query string (it carries ``?``, ``=`` or
-    ``&``) is not part of the path at all and so names no resource.
-
-    """
     import re as _re
     for seg in str(rung).replace("\\", "/").split("/"):
         core = seg.strip("*")
         if not core or "*" in core:
             continue
         if any(ch in core for ch in "?=&"):
-            continue                      # query text, not a path component
+            continue
         if core == seg:
-            return True                   # a component fixed end to end
+            return True
         m = _re.search(r"\.[A-Za-z0-9]{1,6}$", core)
         if m and len(core) > len(m.group(0)):
-            return True                   # a complete file name
+            return True
     return False
 
 
 def _resource_rungs(rung):
-    r"""The forms of one resource-label rung that are worth emitting.
-
-    Every rung on a resource label -- the path the PoC fixed and each coarser
-    truncation offered beside it -- has to pin a whole name to be worth
-    matching on (see _pins_a_name); generalized past that point it is a
-    cross-CVE false positive rather than a tolerance.
-
-    A rung that already pins a name is emitted as written. A rung that pins
-    nothing may still be recoverable: a resource label carries a trailing ``*``
-    so it keeps matching when the target logs the query string, and when that
-    tolerance is glued to the end of a name it is what stops the name from
-    being pinned. Read the tolerance for what it is for -- a query, not further
-    path components -- and the name is pinned again, so the rung is emitted as
-    the exact name plus the same name carrying a query. (A tolerance that
-    follows a separator is left alone: there the PoC did name something below
-    that directory and the wildcard stands for it.) A rung that pins nothing
-    even then is dropped; if no rung of a label survives, the operand is
-    anonymous and the caller drops it to a wildcard.
-    """
     r = str(rung)
     if not r.lstrip("*").startswith("/"):
-        return [r]                        # not a request path: not ours to judge
+        return [r]
     if _pins_a_name(r):
         return [r]
     if r.endswith("*") and len(r) > 1:
@@ -299,22 +179,11 @@ def _resource_rungs(rung):
 
 
 def _discriminating(label):
-    r"""True if a label names something concrete enough to anchor a detection.
-
-    Stricter than _contentful: the structural process placeholders ``*``,
-    ``*.(executable)`` and ``*.*`` carry no discriminator (every host runs
-    processes), so a template built only from them matches anything. A real
-    process name (``winword.exe``, ``rar.exe``), file, or endpoint token counts.
-
-    A bare extension glob (``*.html*``) is refused for the same reason: it pins
-    no name, only a file FORMAT, and every host writes files of common formats,
-    so a template anchored on one alerts on unrelated products.
-    """
     import re as _re
     for branch in (str(label).split("|") if "|" in str(label) else [str(label)]):
         b = branch.strip()
         if _re.fullmatch(r"\.[A-Za-z0-9]{1,6}", b.strip("*")):
-            continue                      # a format, not an artifact
+            continue
         s = b.replace("(executable)", "").replace("executable", "")
         core = _re.sub(r"[*/\\\s.():|;=?&-]", "", s)
         if _re.search(r"[A-Za-z0-9]{2,}", core):
@@ -323,16 +192,6 @@ def _discriminating(label):
 
 
 def _contentful(label):
-    r"""True if a label carries a concrete discriminator, not just wildcards.
-
-    A URL the reader could only abstract to ``*/*`` (its path built from an
-    unresolved variable) names no particular resource: it matches every recorded
-    request, so as an anchor it is a universal false-positive. Such a label is
-    treated as an anonymous operand -- structure without a discriminator -- and
-    per the paper does not become an anchored operation. Contentful means at
-    least one alphanumeric run of length >= 2 survives once wildcards and path
-    separators are removed.
-    """
     import re as _re
     if label is None:
         return False
@@ -341,7 +200,6 @@ def _contentful(label):
 
 
 def _is_rooted_path(s):
-    """True when the literal fixes the whole path, so no prefix is missing."""
     import re as _re
     s = str(s)
     return (s.startswith("/") or s.startswith("\\\\")
@@ -349,35 +207,15 @@ def _is_rooted_path(s):
 
 
 def _path_tolerance(label):
-    """Add a leading wildcard where the PoC does not fix the containing path.
-
-    A PoC that names a bare ``human2.aspx`` or ``CompleteFTPManager.exe`` does
-    not say which directory it lives in, while the target's log records the
-    absolute path (``C:\\MOVEitTransfer\\wwwroot\\human2.aspx``). The missing
-    prefix is a fact about the source, so the wildcard is derived, not chosen
-    per CVE. A literal that is already rooted, or already carries a wildcard,
-    is left exactly as written.
-    """
     s = str(label)
     if not s or "*" in s:
         return s
     if _is_rooted_path(s):
-        # A rooted path ending in a separator names a directory, not the file
-        # the operation lands on, so the tail is still open.
         return s + "*" if s.endswith(("/", "\\")) else s
     return "*" + s
 
 
 def _operand_label(raw):
-    """Label for a file/object operand, or None when nothing is resolvable.
-
-    Value propagation may leave an expression rather than a literal. Rather
-    than discard the whole operand, keep the part the PoC does fix and mark the
-    rest open: ``'/etc/password/' + name`` fixes the directory, so the template
-    keeps ``/etc/password/*`` instead of an anonymous wildcard that anchors
-    nothing. This follows the paper's rule that resolved values label vertices
-    and unresolved ones become wildcards -- applied per field, not per operand.
-    """
     folded = _fold_str(raw)
     if folded is None or folded.strip("*") == "":
         return None
@@ -386,15 +224,6 @@ def _operand_label(raw):
 
 
 def _with_basename_alt(label):
-    r"""Offer a file label's basename as a ``|`` alternative.
-
-    A host collector may record a file by its full path (``C:\Temp\x.dll``) or by
-    a basename the analyst normalized to (``x.dll``); the PoC fixes only one form.
-    When the label carries a path, add ``*basename*`` as an alternative so either
-    recorded form aligns. Only for a distinctive basename (a dotted extension, or
-    a long token) to avoid matching on a generic component. Returns the label
-    unchanged when it has no path separator or no distinctive basename.
-    """
     import re as _re
     core = str(label).strip("*")
     parts = _re.split(r"[\\/]", core)
@@ -417,21 +246,6 @@ _re_placeholder = _re_mod.compile(r"\{[^{}]*\}")
 
 
 def _fold_str(raw):
-    r"""Fold a string-valued expression into a partially-concrete label.
-
-    Value propagation resolves what the PoC fixes and wildcards the rest, per
-    field (paper Sec 4.3). Re-parsing the (already value-substituted) expression
-    lets the AST decode escapes for us -- ``'\\App_Extensions\\'`` becomes the
-    value ``\App_Extensions\`` -- and lets us keep every concrete piece of a
-    concatenation while marking each unresolved operand ``*``:
-
-        share + '\\' + 'mimispool.dll'   ->   *\mimispool.dll
-        install + '\\App_Extensions\\' + name + '.aspx'  ->  *\App_Extensions\*.aspx
-
-    A single ``*`` (nothing resolvable) returns "" so the caller drops it to an
-    anonymous operand rather than an anchor that matches every path. Returns
-    None if the expression will not parse.
-    """
     import ast as _ast
     try:
         node = _ast.parse(str(raw), mode="eval").body
@@ -458,7 +272,7 @@ def _fold_str(raw):
                 else:
                     emit("*")
         elif isinstance(n, _ast.BinOp) and isinstance(n.op, _ast.Mod):
-            walk(n.left)  # "%s/foo" % x keeps the format string's literal
+            walk(n.left)
         elif (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
               and n.func.attr == "format"
               and isinstance(n.func.value, _ast.Constant)
@@ -470,22 +284,11 @@ def _fold_str(raw):
     walk(node)
     s = "".join(parts)
     s = s.replace("\x00", "")
-    # Strip a scheme+host if a full URL slipped through (paths only).
     return s
 
 
 def _exe_name(raw):
-    """Concrete executable label for a spawned child, or wildcard if dynamic.
-
-    A spawn operand is often a whole command line (``rundll32.exe payload.dll,Main``)
-    while a process collector records the child by its image name (``rundll32.exe``).
-    The command line is kept as the primary label, with the image name offered as
-    a ``|`` alternative so either recorded form aligns.
-    """
     import re as _re, ast as _ast
-    # A spawn operand is often an argv LIST (subprocess.run(["rar","a",out])).
-    # The program is its first element; fold the list into a command string so
-    # the same labelling rules apply.
     try:
         _n = _ast.parse(str(raw), mode="eval").body
         if isinstance(_n, (_ast.List, _ast.Tuple)):
@@ -502,17 +305,11 @@ def _exe_name(raw):
         pass
     lbl = _clean_label(raw)
     if lbl is None or str(lbl).strip() in ("", "*") or str(lbl).startswith("*"):
-        # A command line assembled from literals and variables ("curl ... " + host
-        # + ":" + port + "/_bulk") is not a single literal, but the part the PoC
-        # fixes still names the program. Fold it the same way a file operand is
-        # folded rather than discarding the whole operand.
         folded = _fold_str(raw)
         if folded is None or folded.strip("*") == "" or folded.startswith("*"):
             return "*.(executable)"
         lbl = folded
     full = _path_tolerance(str(lbl))
-    # First token of the command line (honouring a quoted program path), reduced
-    # to its basename -- the image name a process event carries.
     cmd = str(lbl).strip()
     m = _re.match(r'^"([^"]+)"|^(\S+)', cmd)
     first = (m.group(1) or m.group(2)) if m else None
@@ -526,7 +323,6 @@ def _exe_name(raw):
 
 
 def _file_verb(mode_arg):
-    """read/write from an open() mode argument (default read)."""
     m = str(mode_arg).strip().strip("'\"").lower() if mode_arg is not None else "r"
     if any(c in m for c in ("w", "a", "x", "+")):
         return "write"
@@ -537,9 +333,6 @@ def _arg_at(args, i):
     return args[i] if (args and 0 <= i < len(args)) else None
 
 
-# Conventional keyword names carrying the operand for each kind, so a call
-# written requests.get(url=...) or open(file=...) resolves like the positional
-# form. The map may also name one explicitly via a record's "kwarg" field.
 _KIND_KWARGS = {
     "http": ("url",),
     "file": ("file", "name", "path"),
@@ -571,7 +364,6 @@ def _record_container_literal(name, lit, variable_mapping):
 
 
 def _container_path_alts(raw):
-    """Path-like operands written into the container this argument names."""
     lits = _CONTAINER_LITERALS.get(str(raw).strip())
     if not lits:
         return None
@@ -591,12 +383,6 @@ def _container_path_alts(raw):
 
 
 def _resolve_operand(args, kwargs, rec, kind):
-    """The operand for this record, from the positional slot or a keyword.
-
-    Real PoCs pass the observable value either positionally or by keyword; we
-    try the record's positional index first, then an explicit ``kwarg`` name,
-    then the conventional keyword names for the kind.
-    """
     i = rec.get("arg")
     if i is not None:
         v = _arg_at(args, i)
@@ -613,13 +399,6 @@ def _resolve_operand(args, kwargs, rec, kind):
 
 
 def _net_peer_label(raw):
-    """Peer endpoint label from a socket address argument.
-
-    ``connect((host, port))`` and ``sendto(data, (host, port))`` carry the peer
-    as an ``(host, port)`` tuple. Resolve each component the value propagation
-    fixed: a literal host/port becomes ``host:port``; an unresolved host is a
-    wildcard. Returns None when nothing resolvable is present.
-    """
     import re as _re
     s = str(raw).strip()
     m = _re.match(r"^\(\s*(.+?)\s*,\s*(.+?)\s*\)$", s)
@@ -644,15 +423,6 @@ def _fresh_wildcard():
 
 
 def _subject_node(output_graph, image):
-    """Process vertex for an operation the runtime performs inside a service.
-
-    Most operations are recorded under the process that issued them, so their
-    subject is the acting one. Some are not: a runtime hands the work to a
-    system service, and the collector attributes it to that service's image.
-    Pi names such an image in a record's ``subject`` field (collector-profile
-    knowledge, keyed on the OS, never on a CVE). The vertex is minted once per
-    image and shared by every record that names it.
-    """
     import re as _re
     nid = "proc_" + (_re.sub(r"[^A-Za-z0-9]+", "_", str(image)).strip("_").lower() or "subject")
     if nid not in output_graph:
@@ -661,16 +431,6 @@ def _subject_node(output_graph, image):
 
 
 def _attribute_assign_keys(target, function_mapping):
-    r"""Pi keys for an attribute assignment ``obj.Prop = value``.
-
-    An assignment can be an operation just as a call can: an automation object
-    model exposes behaviour through properties (``item.ReminderSoundFile =
-    r'\\host\share\x.wav'`` makes the client fetch that resource), and the
-    reader would otherwise see no call and lower nothing. Keys resolve exactly
-    the way call keys do -- the import-resolved dotted path when the receiver
-    resolves to a module, the bare attribute name when it is a value the reader
-    cannot resolve -- and end in ``=`` the way a call key ends in ``()``.
-    """
     keys = []
     try:
         qualified = get_attribute_name(target, function_mapping)
@@ -686,7 +446,6 @@ def _attribute_assign_keys(target, function_mapping):
 
 def handle_attribute_assign(target, value, function_mapping, variable_mapping,
                             output_graph, base_process_node):
-    """Lower ``obj.Prop = value`` when Pi maps that property to operations."""
     for key in _attribute_assign_keys(target, function_mapping):
         if key not in syscalls:
             continue
@@ -700,11 +459,6 @@ def handle_attribute_assign(target, value, function_mapping, variable_mapping,
 
 
 def _returns_to_assign(body, target):
-    """Rewrite ``return <expr>`` into ``<target> = <expr>`` in an inlined body.
-
-    Used when a helper's result is what the caller acts on. Nested function and
-    lambda bodies are left alone -- their returns belong to those functions.
-    """
     import copy as _copy
 
     class _R(ast.NodeTransformer):
@@ -732,16 +486,6 @@ def _returns_to_assign(body, target):
 
 
 def _inline_functions(tree, max_depth=3):
-    r"""Inline user-defined function calls, binding arguments to parameters.
-
-    Real PoCs route the request through helpers (``def exploit(t): url = t +
-    '/cli'; download(url=url)``), so the endpoint is only reachable across a
-    call. Following the paper's depth-3 inlining, we replace a statement-level
-    call to a user function with its body, prefixed by ``param = arg``
-    assignments, so value propagation then resolves the operand. Conservative:
-    statement-level calls only (bare ``f(...)`` or ``x = f(...)``), positional
-    and keyword args, no recursion, bounded depth.
-    """
     funcs = {n.name: n for n in ast.walk(tree)
              if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
     classes = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
@@ -755,8 +499,6 @@ def _inline_functions(tree, max_depth=3):
     def binds_for(fn, call):
         out = []
         names = [a.arg for a in fn.args.args]
-        # A method's first parameter is ``self``; a ``self.m(args)`` call passes
-        # no receiver in call.args, so drop it before aligning params to args.
         if names and names[0] in ("self", "cls"):
             names = names[1:]
         for i, a in enumerate(call.args):
@@ -784,10 +526,6 @@ def _inline_functions(tree, max_depth=3):
                 call = st.value
             elif isinstance(st, ast.Assign) and isinstance(st.value, ast.Call):
                 call = st.value
-            # ``obj = Cls(args)`` -- a class-based PoC fixes its operands in the
-            # constructor (``PoC('calc.exe', 'test2.doc')``) and acts on them in a
-            # method. Inline __init__ with its arguments bound, and remember the
-            # variable's class so ``obj.method()`` can be inlined too.
             if (call is not None and isinstance(st, ast.Assign) and len(st.targets) == 1
                     and isinstance(st.targets[0], ast.Name)):
                 cname = call.func.id if isinstance(call.func, ast.Name) else None
@@ -799,7 +537,6 @@ def _inline_functions(tree, max_depth=3):
                     out.extend(inline_stmts([_copy.deepcopy(x) for x in init.body], depth + 1))
                     inst_cls[st.targets[0].id] = cname
                     continue
-            # ``obj.method(args)`` where obj was built from a known class.
             if call is not None and isinstance(call.func, ast.Attribute) \
                     and isinstance(call.func.value, ast.Name) \
                     and call.func.value.id in inst_cls and depth < max_depth:
@@ -817,10 +554,6 @@ def _inline_functions(tree, max_depth=3):
             if fn is not None and depth < max_depth and fn.name != getattr(fn, "_inlining", None):
                 import copy as _copy
                 body = [_copy.deepcopy(s) for s in fn.body]
-                # ``x = helper(...)``: the operand the PoC fixes is the helper's
-                # RETURN value, so rewrite each of the helper's returns into an
-                # assignment to x. Value propagation then resolves x, and the
-                # control-flow split explores each return branch in turn.
                 if isinstance(st, ast.Assign) and len(st.targets) == 1:
                     body = _returns_to_assign(body, st.targets[0])
                 out.extend(binds_for(fn, call))
@@ -843,21 +576,9 @@ def _inline_functions(tree, max_depth=3):
 
 
 def _inline_self_attrs(tree):
-    r"""Substitute string-valued instance attributes before extraction.
-
-    Class-based PoCs set the target in ``__init__`` (``self.base_url =
-    'http://' + host``) and build requests from it (``self.base_url + path``).
-    Value propagation over local names misses these, so the request path is
-    lost. We collect every ``self.<attr>`` assigned a single string-valued
-    expression and replace each later ``self.<attr>`` read with that
-    expression, so the existing propagation and folding recover the path.
-    """
     assigns, counts = {}, {}
 
     def stringy(n):
-        # A bare name counts: ``self.docfile = docfile`` forwards a constructor
-        # parameter, and substituting the name lets ordinary value propagation
-        # resolve it to the literal the caller passed.
         return (isinstance(n, ast.Constant) and isinstance(n.value, str)) \
             or isinstance(n, ast.JoinedStr) \
             or isinstance(n, ast.Name) \
@@ -877,9 +598,6 @@ def _inline_self_attrs(tree):
                     seen_vals.setdefault(t.attr, set()).add(repr(node.value))
                 if stringy(node.value):
                     assigns.setdefault(t.attr, node.value)
-    # An attribute is substitutable when every assignment to it carries the same
-    # expression. Inlining a constructor duplicates its body, so counting raw
-    # assignments would reject an attribute the PoC in fact sets only one way.
     keep = {a: v for a, v in assigns.items() if len(seen_vals.get(a, ())) == 1}
     if not keep:
         return tree
@@ -898,13 +616,6 @@ def _inline_self_attrs(tree):
 
 
 def handle_function(function_name, args, kwargs, output_graph, base_process_node):
-    """Lower one call into template operations, driven by Pi's operation records.
-
-    Each record's 'kind' selects the lowering; the map, not this code, holds
-    which APIs are requests, spawns, file I/O, socket exchanges or generic
-    object operations. Runner-side operations of a remote PoC are discarded by
-    R*, so under remote locus only 'http' records survive.
-    """
     global types, syscalls, star_index, locus
 
     for rec in syscalls.get(function_name, []):
@@ -912,45 +623,25 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
         if kind == "noop":
             continue
 
-        # --- HTTP request ---
         if kind == "http":
             url = _resolve_operand(args, kwargs, rec, "http")
             query = _query_body_anchor(kwargs)
             if locus == "remote":
-                # Target view (R*): the request the monitored host records, as a
-                # resource the vulnerable service reads or writes.
                 if "method_arg" in rec:
                     verb = _http_class_from_method(_arg_at(args, rec["method_arg"]) or kwargs.get("method"))
                 else:
                     verb = rec.get("class", "write")
                 base = _http_resource_label(url) if url is not None else None
                 if base is None or not _contentful(base):
-                    # The request line fixes no path; a path-valued parameter
-                    # names the resource the target will serve.
                     base = _path_valued_param(kwargs) or base
-                # A collector logs the whole request line, so query/body params
-                # (params=, data=, json=) are part of the resource the target
-                # records -- often where the discriminating anchor lives.
                 path = _merge_query(base, query)
                 if not _contentful(path):
-                    # No concrete resource token: an anonymous operand, dropped.
                     path = _fresh_wildcard()
                     path_label = path
                 else:
-                    # Offer, as | alternatives, the forms the trace may have
-                    # recorded: the full path+query and the path alone (a query
-                    # the log omitted, e.g. a webshell logged only by its path).
-                    # The concrete query VALUE is kept as a discriminator rather
-                    # than wildcarded -- a bare name=* matches any request to that
-                    # route and is a cross-CVE false positive.
                     alts = [path]
                     if query is not None and base is not None and base != path:
                         alts.append(base)
-                    # The directory the resource sits in: a collector may have
-                    # recorded a sibling resource of the same vulnerable surface
-                    # (/CFIDE/administrator/index.cfm vs .../enter.cfm). Bounded
-                    # to the immediate parent, and only when that parent is itself
-                    # distinctive, so it never widens to a site root.
                     core = (base or path).strip("*").split("*", 1)[0].split("?", 1)[0]
                     segs = [x for x in core.split("/") if x]
                     if len(segs) >= 2:
@@ -960,24 +651,11 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                             palt = "*/" + parent + "/*"
                             if palt not in alts:
                                 alts.append(palt)
-                        # The site root the product serves under. A capture
-                        # often records a different resource of the same
-                        # vulnerable surface than the one the PoC named -- the
-                        # WS_FTP PoC probes /AHT/AHT_UI/public/js/app.min.js as
-                        # a version check while the capture holds the exploited
-                        # /AHT/AhtApiService.asmx/AuthUser -- and this rung is
-                        # the only one that bridges them. It is the coarsest
-                        # rung emitted and the one that costs cross-CVE
-                        # precision, so it is bounded: a short or ordinary
-                        # first segment (see _GENERIC_SEG) never becomes one.
                         first = segs[0]
                         if len(first) >= 3 and first.lower() not in _GENERIC_SEG:
                             salt = "*/" + first + "/*"
                             if salt not in alts:
                                 alts.append(salt)
-                    # Every rung, the PoC's own path included, has to pin a whole
-                    # name to be worth matching on; one generalized past that is
-                    # a cross-CVE false positive, not a tolerance.
                     alts = [r for a in alts for r in _resource_rungs(a)]
                     alts = list(dict.fromkeys(alts))
                     if not alts:
@@ -994,22 +672,13 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 output_graph.add_node(path, node_info=Node(path, "File", path_label))
                 output_graph.add_edge(host_id, path, syscall=verb)
             else:
-                # Local locus: the request is a transmission the runner emits
-                # (delivery). It is a connection to a peer named by the URL, not
-                # a target-side resource -- the runner never records the service
-                # reading it. Represented as the sig's local shape: an outbound
-                # connection between the runner and the endpoint.
                 peer = _http_endpoint_label(url) if url is not None else None
                 peer = _merge_query(peer, query)
                 if not _contentful(peer):
                     peer = _fresh_wildcard()
                     peer_label = peer
                 else:
-                    # Offer the coarser endpoint forms an attacker-host graph may
-                    # have recorded (service prefix, host:port) as | alternatives.
                     alts = _coarse_peer_alts(peer, url)
-                    # Same floor as the target-side ladder: a rung that pins no
-                    # whole name is not an endpoint, it is a prefix.
                     alts = [r for a in alts for r in _resource_rungs(a)]
                     alts = list(dict.fromkeys(alts))
                     if not alts:
@@ -1018,26 +687,15 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     else:
                         peer_label = " | ".join(alts) if len(alts) > 1 else alts[0]
                 output_graph.add_node(peer, node_info=Node(peer, "Socket", peer_label))
-                # Outbound only: the runner reaches the endpoint. A reverse edge
-                # would demand the endpoint reach back to the runner, which need
-                # not hold when the actual connector is a descendant process the
-                # k-tolerant path reaches forward but not in reverse.
                 output_graph.add_edge(base_process_node, peer, syscall="connect")
             continue
 
-        # The subject a collector attributes this operation to: the acting
-        # process unless Pi names a service that performs it (see _subject_node).
         subject = rec.get("subject")
         acting = base_process_node if subject is None else _subject_node(output_graph, subject)
 
-        # Everything below is runner/asset-side: only for a local-locus PoC.
-        # A subject-bearing record is the exception -- it is not the runner's
-        # operation at all, so R* (which discards the runner's own side) leaves
-        # it standing under either locus.
         if locus == "remote" and subject is None:
             continue
 
-        # --- Process creation: spawn a child under the acting subject. ---
         if kind == "spawn":
             cmd = _resolve_operand(args, kwargs, rec, "spawn")
             child_label = _exe_name(cmd) if cmd is not None else "*.(executable)"
@@ -1047,7 +705,6 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
             output_graph.add_edge(acting, child_id, syscall="create")
             continue
 
-        # --- File I/O on the running host: one edge, read or write. ---
         if kind == "file":
             path_arg = _resolve_operand(args, kwargs, rec, "file")
             if path_arg is None:
@@ -1066,9 +723,6 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
             else:
                 fid = str(label)
                 if rec.get("reg") and not str(label).startswith("*"):
-                    # A registry write is recorded under its hive (HKLM\...); the
-                    # winreg subkey the PoC names omits that prefix, so anchor it
-                    # with a leading wildcard.
                     label = "*" + str(label)
                 if " | " not in str(label):
                     label = _with_basename_alt(label)
@@ -1076,12 +730,7 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
             output_graph.add_edge(acting, fid, syscall=verb)
             continue
 
-        # --- Socket exchange: connect/send/receive to a network peer. ---
         if kind == "net":
-            # Only address-bearing calls (connect, sendto) name the peer; send,
-            # recv and file transfers act on the already-established connection,
-            # so their operand is payload, never an endpoint. Labelling a peer
-            # with payload bytes would invent an endpoint the target never saw.
             if rec.get("peer"):
                 label = _net_peer_label(_resolve_operand(args, kwargs, rec, "net"))
             else:
@@ -1091,12 +740,6 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                     nid = _fresh_wildcard()
                     label = nid
                 else:
-                    # A service-mediated exchange: what the collector records is
-                    # the connection itself, under the service image, while the
-                    # peer is a run-time argument the PoC does not fix. Keep the
-                    # endpoint as a structural wildcard vertex -- the same reading
-                    # the target view gives its client/host pair -- rather than
-                    # discarding it as an anonymous operand and losing the edge.
                     nid = f"net_peer{star_index}"
                     star_index += 1
                     label = "*"
@@ -1110,7 +753,6 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
                 output_graph.add_edge(acting, nid, syscall=cls)
             continue
 
-        # --- Generic object operation via the type map (chmod/rename/...). ---
         if kind == "generic":
             syscall_name = rec.get("syscall")
             if syscall_name not in types:
@@ -1135,13 +777,9 @@ def handle_function(function_name, args, kwargs, output_graph, base_process_node
         
 def handle_tree(tree, filename, foldername, output_graph, base_process_node):
     global types, syscalls, star_index
-    # mapping of functions/aliases to modules and original function names
     function_mapping = {}
-    # set of user defined functions within a file
     user_defined_functions = set()
-    # set of modules defined by users
     user_defined_modules_and_functions = set()
-    # mapping of variable names to complete statements
     variable_mapping = {}
 
     star_index = 0
@@ -1156,7 +794,6 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                         user_defined_modules_and_functions.add(alias.name)
         elif isinstance(node, ast.ImportFrom):
             for alias in node.names:
-                # relative import case ???
                 if alias.asname:
                     if node.module:
                         function_mapping[alias.asname] = node.module + "." + alias.name
@@ -1185,9 +822,6 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                             user_defined_modules_and_functions.add(alias.name)
         elif isinstance(node, ast.FunctionDef):
             user_defined_functions.add(node.name + "()")
-    # print(function_mapping)
-    # print(user_defined_functions)
-    # print(user_defined_modules_and_functions)
     
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -1197,8 +831,6 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                     mapped_expression = map_variables_and_remove_call_arguments(node.value, variable_mapping)
                     variable_mapping[variable_name] = mapped_expression
                 elif isinstance(target, ast.Attribute):
-                    # ``obj.Prop = value``: an operation when Pi maps the
-                    # property, not merely a value binding.
                     handle_attribute_assign(target, node.value, function_mapping,
                                             variable_mapping, output_graph,
                                             base_process_node)
@@ -1220,18 +852,6 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                             variable_name = element.id
                             mapped_expression = map_variables_and_remove_call_arguments(node.value, variable_mapping)
                             variable_mapping[variable_name] = mapped_expression
-                        # elif not isinstance(element, ast.Attribute) and not isinstance(element, ast.Starred) and not isinstance(element, ast.Tuple):
-                        #     print("Unrecognized tuple member")
-                        #     print("Dump: ", ast.dump(target))
-                        #     print("Unparse: ", ast.unparse(target))
-                        #     exit(1)
-                # elif not isinstance(target, ast.Attribute) and not isinstance(target, ast.Subscript):
-                #     print("Unrecognized node type")
-                #     print("Dump: ", ast.dump(node))
-                #     print("Unparse: ", ast.unparse(node))
-                #     print("Target dump: ", ast.dump(target))
-                #     print("Target unparse: ", ast.unparse(target) )
-                #     exit(1)
         elif isinstance(node, ast.AugAssign):
             if isinstance(node.target, ast.Name):
                 variable_name = node.target.id
@@ -1253,7 +873,6 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                 variable_mapping[variable_name] = type
         elif isinstance(node, ast.With):
             for item in node.items:
-                # if len(node.items) == 1 and isinstance(node.items[0].context_expr, ast.Call):
                 if isinstance(item.context_expr, ast.Call):
                     function = item.context_expr
                     if item.optional_vars:
@@ -1264,17 +883,10 @@ def handle_tree(tree, filename, foldername, output_graph, base_process_node):
                             print("Dump: ", ast.dump(node))
                             print("Unparse: ", ast.dump(node))
                             exit(1)
-                # else:
-                #     print("context expression unrecognized node type")
-                #     print("Dump: ", ast.dump(node))
-                #     print("Unparse: ", ast.unparse(node))
-                #     exit(1)
         if isinstance(node, ast.Call):
             function_name, args, kwargs = process_call_node(node, function_mapping, variable_mapping)
 
-            # Check that function isn't user defined
             if function_is_relevant(function_name, user_defined_functions, user_defined_modules_and_functions, function_mapping):
-                # handle function call
                 if function_name in syscalls:
                     handle_function(function_name, args, kwargs, output_graph, base_process_node)
 
@@ -1318,16 +930,11 @@ def graph_signature(graph):
 
 
 def graphs_are_equal(graph1, graph2):
-    """Check if two graphs are equal by node names and syscall-labeled edges."""
     return graph_signature(graph1) == graph_signature(graph2)
 
 
 _NODE_TYPE_TO_SIG = {"Process": "process", "File": "file", "Socket": "net", "None": "file"}
 
-# Normalize stage-2 syscall names onto the stage-3 alignment vocabulary.
-# Stage 3 (trace-align) + our prov graphs use: create, read, write, open, close,
-# access, connect, recvfrom, sendto, dns, query, rename. Keep the mapping tight
-# so stage 2 output aligns cleanly without stage-3 modifications.
 _SYSCALL_NORMALIZE = {
     "spawn": "create",
     "execute": "create",
@@ -1338,7 +945,6 @@ _SYSCALL_NORMALIZE = {
 
 
 def _sig_id(nid, seen):
-    """Deterministic, stage-3-safe id: prefix by type, sanitize, uniqueify."""
     import re as _re
     base = _re.sub(r"[^A-Za-z0-9_]+", "_", str(nid))[:40].strip("_") or "v"
     out = f"sig_{base}"
@@ -1351,25 +957,14 @@ def _sig_id(nid, seen):
 
 
 def _clean_label(label):
-    """Strip AST-unparse artefacts and collapse dynamic expressions to wildcards.
-
-    * Bare string literals (``'/path'``)       -> ``/path``
-    * Escaped Windows paths (``'C:\\\\a\\\\b'``) -> ``C:\\a\\b``
-    * URLs (``http://host/p``)                 -> ``/p``
-    * Dynamic expressions that we cannot resolve to a concrete string
-      (``self.url + '/foo'``, ``args.target``, ``f'{x}/cli'``) -> ``*``
-      so stage 3 label_matches treats them as wildcards.
-    """
     import re as _re
     s = str(label).strip()
     is_fstring = s.startswith(("f'", 'f"'))
     if is_fstring:
         s = s[1:]
-    # Try: is this a literal string? If yes, decode escapes.
     if len(s) >= 2 and s[0] == s[-1] and s[0] in ("'", '"'):
         inner = s[1:-1]
-        if s[0] not in inner:  # no embedded quote of same kind -> clean literal
-            # An f-string with `{var}` is not a literal -- wildcard it.
+        if s[0] not in inner:
             if is_fstring and _re.search(r"\{[^{}]+\}", inner):
                 return "*"
             try:
@@ -1378,16 +973,12 @@ def _clean_label(label):
             except Exception:
                 pass
             s = inner or s
-            # URL path extraction.
             m = _re.match(r"^(https?)://[^/]+(/.*)$", s)
             if m:
                 s = m.group(2)
             return s or label
-    # Bare identifier (variable name, no dots/slashes/quotes) -> unresolved.
     if _re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s):
         return "*"
-    # Not a literal. If it looks like an expression (method call, attribute
-    # access on non-string, binary op, f-string with subs) -> wildcard.
     if _re.search(r"[a-zA-Z_][a-zA-Z0-9_]*\s*\(", s) or \
        _re.search(r"\b[a-zA-Z_][a-zA-Z0-9_]*\.[a-zA-Z_]", s) or \
        "{" in s or "+" in s:
@@ -1396,7 +987,6 @@ def _clean_label(label):
 
 
 def _canonical_graph_signature(graph):
-    """Stable (nodes, edges) tuple used to dedupe across stage-2 variants."""
     nodes = []
     edges = []
     for _, data in graph.nodes(data=True):
@@ -1417,19 +1007,6 @@ def _canonical_graph_signature(graph):
 
 
 def write_sig_txt(graph, out_path):
-    """Write a stage-3-compatible NODE/EDGE text file from a stage-2 template graph.
-
-    Filters applied:
-      * normalizes syscall vocabulary (spawn/execute -> create, etc.)
-      * drops pure-wildcard file/net nodes with label '*' (no useful anchor)
-      * prunes nodes that are left with no edges after filtering
-    """
-    # Drop only *anonymous operands*: call sites whose operand the reader could
-    # not resolve. Per the paper these simply do not become operations, so the
-    # template shrinks. They are exactly the nodes whose id has the '*N' form
-    # minted above. Structural wildcards the target view needs -- the remote
-    # client/host pair and the '*.(executable)' runner -- carry real ids and
-    # survive, since a wildcard still constrains structure.
     import re as _re
     _anon_id_rx = _re.compile(r"^\*\d*$")
     keep = {}
@@ -1453,7 +1030,6 @@ def write_sig_txt(graph, out_path):
         seen_edges.add((u, v, sc))
         normalized_edges.append((u, v, sc))
 
-    # Drop nodes with no remaining edges (orphans after filtering).
     active = {u for u, _, _ in normalized_edges} | {v for _, v, _ in normalized_edges}
     keep = {k: v for k, v in keep.items() if k in active}
 
@@ -1462,10 +1038,6 @@ def write_sig_txt(graph, out_path):
     for nid, info in keep.items():
         id_map[nid] = _sig_id(info.id, seen)
 
-    # A template with no discriminating anchor -- only structural wildcards like
-    # a *.(executable) -> *.(executable) spawn -- matches any provenance with the
-    # same shape (every host spawns processes), so it is a universal false
-    # positive. Emit nothing unless some node carries a concrete label.
     if not any(_discriminating(info.label) for info in keep.values()):
         with open(out_path, "w", encoding="utf-8") as f:
             f.write("")
@@ -1474,8 +1046,6 @@ def write_sig_txt(graph, out_path):
     lines = []
     for nid, info in keep.items():
         t = _NODE_TYPE_TO_SIG.get(info.type, "file")
-        # A label must stay on one line; collapse any embedded newline/CR/tab a
-        # multi-line string operand may have carried in.
         label = str(info.label).replace("\r", " ").replace("\n", " ").replace("\t", " ").strip()
         if not label:
             label = "*"
@@ -1488,20 +1058,10 @@ def write_sig_txt(graph, out_path):
         f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
-# Hard cap on path-variant enumeration so deeply branchy PoCs don't blow up.
-# Real exploit PoCs rarely need more than a handful of distinct variants;
-# anything beyond this is almost certainly duplicate paths that the dedupe
-# step would drop anyway.
 _MAX_TREES = 64
 
 
 def _detect_locus(tree):
-    """Infer invocation locus (paper's manifest) when not given explicitly.
-
-    A PoC whose observable behavior is an HTTP request to a target is
-    remote-locus (only the request transfers to the asset view); one that
-    operates on the running host (file/process) is local-locus.
-    """
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
             name = None
@@ -1514,17 +1074,6 @@ def _detect_locus(tree):
 
 
 def _split_remote_anchors(output_graph):
-    """One template per recorded request, for a remote-locus graph.
-
-    A remote-locus PoC that issues several requests attaches each as a resource
-    the target reads/writes off the shared ``net_client -> proc_host`` pair. The
-    trace records only the requests that actually reached the vulnerable service,
-    so a single template demanding *all* of them over-constrains (a pre-flight
-    check the log missed blocks the whole alignment). Each request is an
-    independent exploit-template candidate, so emit the client/host pair plus one
-    resource at a time; detection holds if any single recorded request aligns.
-    Returns a list of graphs (the input unchanged when it has 0/1 resources).
-    """
     client_id, host_id = "net_client", "proc_host"
     if client_id not in output_graph or host_id not in output_graph:
         return [output_graph]
@@ -1532,7 +1081,6 @@ def _split_remote_anchors(output_graph):
     resources = list(dict.fromkeys(resources))
     if len(resources) <= 1:
         graphs = [output_graph]
-        # Same client-less variant for a single-request template.
         for res in resources:
             P = nx.MultiDiGraph()
             for nid in (host_id, res):
@@ -1552,10 +1100,6 @@ def _split_remote_anchors(output_graph):
             if u in H and v in H:
                 H.add_edge(u, v, **data)
         graphs.append(H)
-        # The requesting client is structural, not evidentiary: a collector may
-        # record only the server-side effect (the service touching the resource)
-        # without a matching network vertex. Also emit the host->resource pair
-        # alone so such a trace still contains the template.
         P = nx.MultiDiGraph()
         for nid in (host_id, res):
             P.add_node(nid, **output_graph.nodes[nid])
@@ -1568,15 +1112,6 @@ def _split_remote_anchors(output_graph):
 
 
 def _split_local_anchors(output_graph):
-    """The full local-locus graph plus one single-anchor template per distinctive
-    artifact.
-
-    A local PoC may perform several operations (write a payload, probe a URL,
-    trigger a fetch) of which the trace records only some. Keeping the whole
-    graph over-constrains, so besides it, emit a template for each distinctive
-    leaf file/net artifact (the acting process + that one artifact). Detection
-    holds if the full chain OR any single recorded artifact aligns.
-    """
     extra = []
     for n, data in list(output_graph.nodes(data=True)):
         info = data.get("node_info")
@@ -1599,16 +1134,6 @@ def _split_local_anchors(output_graph):
 
 
 def _expand_components(parts):
-    """Each weakly-connected component is an independent template candidate.
-
-    A stage-2 graph is normally connected: every operation hangs off the acting
-    subject. It stops being connected as soon as a record names a service
-    subject (Pi's ``subject`` field) -- that operation belongs to the service,
-    not to the runner, and nothing ties the two together. Demanding both halves
-    at once over-constrains, exactly as demanding every request of a multi-request
-    remote PoC does, so the components are offered alongside the whole graph.
-    Returns the input unchanged when every graph is already connected.
-    """
     out = []
     for g in parts:
         out.append(g)
@@ -1626,10 +1151,6 @@ def _expand_components(parts):
 
 
 def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
-    """Generate template graphs. out_format='txt' (stage-3 ready) or 'dot' (legacy pydot).
-
-    locus_mode: 'local', 'remote', or 'auto' (infer per the paper's manifest).
-    """
     global types, syscalls, locus
     _reset_container_literals()
     tree = clean_file(filename, foldername)
@@ -1646,11 +1167,9 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
     locus = locus_mode if locus_mode in ("local", "remote") else _detect_locus(tree)
 
     os.makedirs('graphs', exist_ok=True)
-    # Local locus anchors on the runner process; remote locus mints a target
-    # host inside handle_function and leaves the runner out of the template.
     process_id = "*.(executable)"
     written = 0
-    seen_signatures = set()  # in-run dedupe across variants
+    seen_signatures = set()
     for idx, tree in enumerate(trees):
         output_graph = nx.MultiDiGraph()
         base_process_node = Node(process_id, 'Process', process_id)
@@ -1660,13 +1179,9 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         tree = _inline_self_attrs(tree)
         handle_tree(tree, filename, foldername, output_graph, process_id)
 
-        # Skip graphs that carry no syscall edges (pure control-flow stubs).
         if output_graph.number_of_edges() == 0:
             continue
 
-        # A remote-locus graph with several recorded requests yields one template
-        # per request (each an independent detection candidate); other graphs are
-        # emitted whole.
         if locus == "remote":
             parts = _split_remote_anchors(output_graph)
         elif locus == "local":
@@ -1677,7 +1192,6 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         for sub, g in enumerate(parts):
             if g.number_of_edges() == 0:
                 continue
-            # In-run dedupe by canonical signature (labels + syscall-labeled edges).
             sig_key = _canonical_graph_signature(g)
             if sig_key in seen_signatures:
                 continue
@@ -1690,8 +1204,4 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
                 nx.drawing.nx_pydot.write_dot(g, f'graphs/graph-{idx}{suffix}.dot')
             written += 1
     return written
-# def main():
-#     convert_graph("examples/follina.py", "examples")
 
-# if __name__ == "__main__":
-#     main()
