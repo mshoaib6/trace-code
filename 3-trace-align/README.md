@@ -2,7 +2,9 @@
 
 Aligns template graphs to provenance graphs with a partial-order screen followed by a constrained refinement step.
 
-The provenance graphs distributed here are those of the 45 evaluated CVEs. Running the commands below reproduces the end-to-end result on them: a PoC compiles to a template family and that family aligns against the CVE's own provenance graph. The benign telemetry the paper measures false alerts against, and the full PoC corpus, are not distributed, for size; see `1-trace-scraping/`.
+The provenance graphs distributed here are those of the 45 evaluated CVEs. Running the commands below reproduces the end-to-end result on them: a PoC compiles to a template family and that family aligns against the CVE's own provenance graph.
+
+To go beyond them, build the full PoC corpus with `1-trace-scraping/` and align the resulting templates against the public provenance corpora listed under Public Datasets below. The benign telemetry used for the false-alert measurement is not distributed, for size.
 
 ## Requirements
 

@@ -221,6 +221,64 @@ def _find_k_tolerant_path(G: nx.MultiDiGraph, src: str, dst: str, syscall: str, 
     return False
 
 
+DELTA = 900.0
+EPSILON = 2.0
+
+
+def _observable_classes(profile: Optional[str]):
+    """Event classes a collector profile can record.
+
+    A profile that cannot observe a class the template requires makes the
+    template inapplicable to that asset: the alternative, matching on whatever
+    the profile does record, would alert on reduced structure and count a
+    partial view as evidence.
+    """
+    if not profile:
+        return None
+    import json
+    from pathlib import Path
+    f = Path(__file__).parent / "collector_profiles.json"
+    if not f.exists():
+        return None
+    prof = json.loads(f.read_text(encoding="utf-8")).get(profile)
+    if not isinstance(prof, dict):
+        return None
+    import re as _re
+    return set(_re.findall(r"->\s*([a-z]+)", str(prof.get("class", "")))) or None
+
+
+def applicable(Gsig: nx.MultiDiGraph, profile: Optional[str] = None) -> bool:
+    """False when the collector cannot observe what the template requires."""
+    obs = _observable_classes(profile)
+    if obs is None:
+        return True
+    need = {str(d.get("syscall", "")) for _, _, d in Gsig.edges(data=True)}
+    return need <= obs
+
+
+def _temporally_consistent(Gcand: nx.MultiDiGraph, mapping: Dict[str, str],
+                           sig_edges) -> bool:
+    """Window and ordering over the matched occurrences.
+
+    Matched occurrences must fall inside one window of width DELTA, and a
+    template edge ordered before another must not be observed after it by more
+    than the clock skew EPSILON. A graph whose collector recorded no times
+    leaves both constraints vacuous.
+    """
+    times = []
+    for su, sv, _sc, _req in sig_edges:
+        if su not in mapping or sv not in mapping:
+            continue
+        for _, w, d in Gcand.out_edges(mapping[su], data=True):
+            if w == mapping[sv] and d.get("ts") is not None:
+                times.append(float(d["ts"]))
+    if len(times) < 2:
+        return True
+    if max(times) - min(times) > DELTA:
+        return False
+    return all(times[i] <= times[i + 1] + EPSILON for i in range(len(times) - 1))
+
+
 def refine_alignment(Gsig: nx.MultiDiGraph,
                      Gcand: nx.MultiDiGraph,
                      refine_spec: RefineSpec,
@@ -279,6 +337,8 @@ def refine_alignment(Gsig: nx.MultiDiGraph,
         return False
 
     ok = backtrack(0)
+    if ok and not _temporally_consistent(Gcand, assignment, sig_edges):
+        return False, {}
     return ok, assignment if ok else {}
 
 
@@ -303,7 +363,12 @@ def align_one(Gsig: nx.MultiDiGraph,
               feature_space: FeatureSpace,
               encoder: POEncoder,
               spec: AlignSpec,
-              verbose: bool = False) -> AlignResult:
+              verbose: bool = False,
+              profile: Optional[str] = None) -> AlignResult:
+    if not applicable(Gsig, profile):
+        if verbose:
+            print("  [screen] template inapplicable to this collector profile")
+        return AlignResult(False, None, {})
     z_sig = encoder.embed(feature_space.vectorize(Gsig))
     kappa = classify_vertices(Gsig)
 
@@ -313,7 +378,7 @@ def align_one(Gsig: nx.MultiDiGraph,
         z_p = encoder.embed(feature_space.vectorize(H))
         E = order_violation_energy(z_sig, z_p)
         s = apo_score(z_sig, z_p, eps=spec.po_eps)
-        if E <= spec.po_eps and s >= spec.po_theta:
+        if E <= spec.po_eps - spec.po_theta:
             candidates.append((proc, s, E))
 
     candidates.sort(key=lambda t: (-t[1], t[2]))

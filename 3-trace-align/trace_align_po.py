@@ -39,10 +39,10 @@ def apo_score(z_sig: np.ndarray, z_prov: np.ndarray, eps: float) -> float:
 def load_po_encoder(path: str | None = None):
     """Load the frozen encoder and the feature space it was fitted on.
 
-    The encoder is trained once, offline, on synthetic order-embedding pairs
-    generated from the entity types and event classes of Sigma_sigma. No
-    evaluated CVE, PoC or provenance graph takes part in fitting it, and the
-    feature vocabulary is frozen alongside the weights so the input space does
+    The encoder is fitted once, offline, on a provenance corpus disjoint from
+    evaluation and shipped frozen; train_encoder.py refits it from such a corpus.
+    No evaluated CVE, PoC or provenance graph takes part in fitting it, and the
+    feature vocabulary is frozen alongside the weights, so the input space does
     not depend on the corpus a run is scoring.
     """
     import json

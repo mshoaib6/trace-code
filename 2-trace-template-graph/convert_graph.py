@@ -1061,16 +1061,64 @@ def write_sig_txt(graph, out_path):
 _MAX_TREES = 64
 
 
-def _detect_locus(tree):
+_LOCUS_REMOTE_TERMS = ("target", "victim", "vulnerable host", "remote host",
+                       "target url", "target host", "rhost", "victim url")
+_LOCUS_LOCAL_TERMS = ("run on the target", "run on the vulnerable", "run locally on",
+                      "must be run on", "local privilege", "on the affected host")
+
+
+def _invocation_contract(tree):
+    """The usage text a PoC states about where it runs.
+
+    Read from the invocation contract only: the argument parser's help and
+    description, the usage string, and the module docstring. Endpoint syntax,
+    authentication state and hard-coded addresses say nothing about locus -- a
+    PoC that runs on the target may still open a socket, and one that runs
+    against it may fetch a payload from somewhere else entirely.
+    """
+    text = []
+    doc = ast.get_docstring(tree)
+    if doc:
+        text.append(doc)
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            name = None
             f = node.func
-            if isinstance(f, ast.Attribute):
-                last = f.attr
-                if last in ("get", "post", "put", "delete", "head", "patch", "urlopen"):
-                    return "remote"
-    return "local"
+            attr = f.attr if isinstance(f, ast.Attribute) else None
+            if attr in ("add_argument", "ArgumentParser", "OptionParser", "add_option"):
+                for kw in node.keywords:
+                    if kw.arg in ("help", "description", "usage", "metavar", "dest") \
+                            and isinstance(kw.value, ast.Constant) \
+                            and isinstance(kw.value.value, str):
+                        text.append(kw.value.value)
+                for a in node.args:
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                        text.append(a.value)
+        elif isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id.lower() in ("usage", "__doc__", "banner") \
+                        and isinstance(node.value, ast.Constant) \
+                        and isinstance(node.value.value, str):
+                    text.append(node.value.value)
+    return " ".join(text).lower()
+
+
+def _detect_locus(tree):
+    """Infer the invocation locus from the PoC's invocation contract.
+
+    A path is remote when the contract names a separate target the exploit is
+    aimed at, and local when it states the code runs on the affected host.
+    Conflicting or absent evidence yields UNDETERMINED, which excludes the path
+    rather than guessing: a local path read as remote plants runner-side
+    operations in the target's view, the damaging direction.
+    """
+    contract = _invocation_contract(tree)
+    remote = any(t in contract for t in _LOCUS_REMOTE_TERMS)
+    local = any(t in contract for t in _LOCUS_LOCAL_TERMS)
+    if remote and not local:
+        return "remote"
+    if local and not remote:
+        return "local"
+    return "undetermined"
 
 
 def _split_remote_anchors(output_graph):
@@ -1165,6 +1213,8 @@ def convert_graph(filename, foldername, out_format="txt", locus_mode="auto"):
         syscalls = json.load(syscall_file)
 
     locus = locus_mode if locus_mode in ("local", "remote") else _detect_locus(tree)
+    if locus == "undetermined":
+        return 0
 
     os.makedirs('graphs', exist_ok=True)
     process_id = "*.(executable)"

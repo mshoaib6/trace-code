@@ -8,7 +8,7 @@ import networkx as nx
 
 
 _NODE_RE = re.compile(r'^\s*NODE\s+(\S+)\s+(\S+)\s+(.+?)\s*$')
-_EDGE_RE = re.compile(r'^\s*EDGE\s+(\S+)\s+(\S+)\s+(\S+)\s*$')
+_EDGE_RE = re.compile(r'^\s*EDGE\s+(\S+)\s+(\S+)\s+(\S+)(?:\s+(\S+))?\s*$')
 _QUOTED_RE = re.compile(r'^\s*"(.*)"\s*$')
 
 
@@ -44,11 +44,20 @@ def parse_graph_txt(path: str | Path) -> nx.MultiDiGraph:
         m = _EDGE_RE.match(line)
         if m:
             src, dst, syscall = m.group(1), m.group(2), m.group(3)
+            # An optional fourth field carries the occurrence time. Collectors
+            # that record one enable the window and ordering constraints; a
+            # graph without timestamps leaves them vacuous.
+            ts = None
+            if m.group(4) is not None:
+                try:
+                    ts = float(m.group(4))
+                except ValueError:
+                    ts = None
             if src not in G.nodes:
                 G.add_node(src, type="other", label=src)
             if dst not in G.nodes:
                 G.add_node(dst, type="other", label=dst)
-            G.add_edge(src, dst, syscall=syscall)
+            G.add_edge(src, dst, syscall=syscall, ts=ts)
             continue
         raise ValueError(f"Unrecognized line in {p}: {line}")
     return G
